@@ -1,0 +1,19 @@
+{
+  "shouldAlertMatchDetails": false,
+  "rulesList": [
+	{
+	    "email": "me@example.com",
+		"fromWhitelist": {"shouldTest": false, "list": []},
+		"senderBlacklist": {"list": ["John Doe", "@evil.org", "GitHub"]},
+		"subjectBlacklist": {"list": ["50% off", "Account suspended"]},
+		"contentBlacklist": {"list": ["Dear customer"]}
+	},
+	{
+		"email": "foo@bar.com",
+		"fromWhitelist": {"shouldTest": true, "list": ["GitHub"]},
+		"senderBlacklist": {"list": ["Jane Doe", "support@evil.org"]},
+		"subjectBlacklist": {"list": []},
+		"contentBlacklist": {"list": ["Dear customer"]}
+	}
+  ]
+}
