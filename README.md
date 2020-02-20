@@ -53,7 +53,7 @@ In addition to your own rules there are some more tests that are always performe
 * Zero-width whitespace chars, e.g., "U+FEFF"
 
 ### Bugs in Mail.app
-There seems to be a bug in Mail.app preventing the correct processing of all messages each time you receive multiple messages at once. In that case you can trigger the spam filter by selecting any remaining messages and running Mail.app rules manually via `alt+cmd+L` or via its right-click context menu.
+There seems to be a bug in Mail.app preventing the correct processing of all messages in case you receive multiple messages at once. A bug circumvention was added to spamfilter.scpt. However, if you still note unprocessed messages, you can trigger the spam filter by selecting any remaining messages and running Mail.app rules manually via `alt+cmd+L` or via its right-click context menu.
 
 ## Acknowledgments
 * [JXA-Cookbook](https://github.com/JXA-Cookbook/JXA-Cookbook/wiki)
