@@ -3,7 +3,7 @@ This spam filter lets you easily define filter rules for each of your email acco
 Spam messages are marked as Junk and moved to the trash folder.
 
 ## Installation
-1. Download `spamfilter.scpt` and `spamfilter-rules.json`
+1. Download `spamfilter.scpt` and `spamfilter-rules.json` from [Releases](https://github.com/chsturm/spamfilter/releases)
 2. Move both files to directory `~/Library/Application Scripts/com.apple.mail/`
 3. Open Mail.app's preferences pane and go to "Rules"
 4. Add a new rule with action "Run Applescript" choosing spamfilter.scpt
