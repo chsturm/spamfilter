@@ -1,15 +1,16 @@
 'use strict';
 
-//debugger  // start web inspector panel
-var shouldAlertMatchDetails = false;  // true: alert rule item if a rule match is found
+// start web inspector panel
+//debugger
 
-var mail = Application.currentApplication();
-mail.includeStandardAdditions = true;
-ObjC.import('Foundation');
+var shouldAlertMatchDetails = false  // true: alert rule item if a rule match is found
+
+var mail = Application.currentApplication()
+mail.includeStandardAdditions = true
+ObjC.import('Foundation')
 
 /** load blacklist rules */
-var path = mail.pathTo("library folder", {from: "user domain", folderCreation: false}).toString()
-  + "/Application Scripts/com.apple.mail/spamfilter-rules.json"
+var path = mail.pathTo("library folder", {from: "user domain", folderCreation: false}).toString() + "/Application Scripts/com.apple.mail/spamfilter-rules.json"
 var rulesList = loadRules(path)
 
 function loadRules (path) {
@@ -41,51 +42,102 @@ function loadRules (path) {
 	but to prevent word-based blacklisting in spam.
 	e.g. zero-width spaces like byte order mark
 */
-var cheatChars = ['\uFEFF','\u200B', '\u2060'];
+var cheatChars = ['\uFEFF','\u200B', '\u2060']
 
 /** uncommon file extensions */
-var fileExtensions = ['.7z', '.exe', '.jpg.zip'];
+var fileExtensions = ['.7z', '.exe', '.jpg.zip']
 
 /** uncommon charsets (in lowercase) */
-var charsetBlacklist = ['windows-1251'/* cyrillic*/, 'gb2312'/*chinese*/, 'gb18030'/*chinese*/];
+var charsetBlacklist = ['windows-1251'/* cyrillic*/, 'gb2312'/*chinese*/, 'gb18030'/*chinese*/]
 
 /** handler called by Apple Mail when applying rules on messages */
-function performMailActionWithMessages (messages) {
-	mail.downloadHtmlAttachments = false;
+function performMailActionWithMessages (messages, manualProperties) {
+	mail.downloadHtmlAttachments = false
+	
+	var testMessage = function(rule, message) {
+		// delete message as soon as a blacklist match is detected
+		if (testSelfAddressedForFullName(rule.email, message)
+			 || testSenderForFullName(rule.fromWhitelist, message)
+			 || testMessageField('sender', rule.senderBlacklist, message)
+			 || testMessageField('subject', rule.subjectBlacklist, message)
+			 || testMessageField('source', rule.contentBlacklist, message)) {
+			// mark message as processed by spamfilter for debugging
+			/*message.flagIndex = 6;	// grey
+			message.flaggedStatus = true;*/
+				
+			moveToTrash(message)
+			delay(0.6)  // avoid DoS of your mail server
+			return true
+		} else {
+			console.log("No blacklist matches found")
+			return false
+		}
+	}
 
-	messages.forEach(function(message) {
+	var firstMessageMailbox = null, firstMessageRule = null
+	for (let message of messages) {
+		// skip remaining messages if identical to first one due to bug in Mail.app
+		if (firstMessageMailbox && message.id() === messages[0].id()) break
+	
 		// search matching rule based on email address
-		var rule = rulesList.find(function(rule) {
-			var account = message.mailbox().account();
+		let rule = rulesList.find(function(rule) {
+			let account = message.mailbox().account()
 			return account.emailAddresses().some(function(address){
-				return address === rule.email;
-			});
-		});
+				return address === rule.email
+			})
+		})
 	
 		if (rule) {
-			// delete message as soon as a blacklist match is detected
-			if (testSelfAddressedForFullName(rule.email, message)
-				 || testSenderForFullName(rule.fromWhitelist, message)
-				 || testMessageField('sender', rule.senderBlacklist, message)
-				 || testMessageField('subject', rule.subjectBlacklist, message)
-				 || testMessageField('source', rule.contentBlacklist, message)) {
-				// mark message as processed by spamfilter for debugging
-				/*message.flagIndex = 6;	// grey
-				message.flaggedStatus = true;*/
-				
-				moveToTrash(message);
-				delay(0.5);
+			// store mailbox and account rule of first message to test remaining ones
+			if (!firstMessageMailbox) {
+				firstMessageMailbox = message.mailbox()
+				firstMessageRule = rule	
 			}
-			else
-				console.log("No blacklist matches found");
+			
+			testMessage(rule, message)
 		}
-	});
-};
+	}
+	
+	// no bug circumvention needed if only one message in list or user-selected list
+	if ((messages.length === 1 && firstMessageMailbox.unreadCount() === 0)
+		|| (messages.length > 1 && messages[0].id() !== messages[1].id())) return
+	
+	// test messages not dealt with above due to bug in Mail.app
+	var retestMailbox = function () {
+		// chronological join of 'Deleted Messages' since startup and 'INBOX' 
+		var mailboxMessages = firstMessageMailbox.messages(), msgIdx = 0,
+			unreadCount = firstMessageMailbox.unreadCount() || messages.length
+	
+		while (msgIdx < unreadCount && msgIdx < mailboxMessages.length) {
+			const message = mailboxMessages[msgIdx], readStatus = message.readStatus()
+			
+			// don't count already tested spam messages or read messages
+			if (message.junkMailStatus() || readStatus) unreadCount++
+			
+			// skip already tested first message
+			if (message.id() !== messages[0].id() && !readStatus) {
+				if (testMessage(firstMessageRule, message)
+					  && firstMessageMailbox.unreadCount() === 0)
+					break
+			}
+			
+			msgIdx++
+		}
+	}
+	// try multiple times to catch all unread messages in INBOX
+	for (var i=0; i<5; i++) {
+		console.log("more messages left: "+ firstMessageMailbox.unreadCount())
+		if (firstMessageMailbox.unreadCount() > 0) {
+			delay(0.5)
+			retestMailbox()
+		} else break
+	}
+}
 
 /** Alert item that matched a rule; useful for enhancing rules */
 function alertMatchDetails (field, item) {
-	if (!shouldAlertMatchDetails) return;
-	mail.displayDialog(field +': '+ item, {withTitle: 'Spamfilter match details'});
+	if (!shouldAlertMatchDetails) return
+	mail.displayDialog(field +': '+ item, {withTitle: 'Spamfilter match details'})
 }
 
 /** returns spam match (true) if self addressed email (sender === receiver address) doesn't include account owner's full name */
@@ -107,7 +159,7 @@ function testSenderForFullName (whitelist, message) {
 	const addressIdx = from.indexOf("<")  // e.g. X Y <xy@abc.com>
 	if (addressIdx <= 0) return false
 	const name = from.substring(0, addressIdx).trim()
-	if (name.indexOf(" ") > 0) return false
+	if (name === "" || name.indexOf(" ") > 0) return false
 	const res = !whitelist.list.includes(name)
 	if (res) alertMatchDetails('Sender with full name test', 'Found only one word')
 	return res
@@ -221,7 +273,7 @@ function moveToTrash (mes) {
 	}
 
 	mes.mailbox = trash()
-	mail.checkForNewMail(account)
+	//mail.checkForNewMail(account)
 }
 
 

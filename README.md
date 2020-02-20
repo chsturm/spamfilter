@@ -3,7 +3,7 @@ This spam filter lets you easily define filter rules for each of your email acco
 Spam messages are marked as Junk and moved to the trash folder.
 
 ## Installation
-1. Download `spamfilter.scpt` and `spamfilter-rules.json`
+1. Download `spamfilter.scpt` and `spamfilter-rules.json` from [Releases](https://github.com/chsturm/spamfilter/releases)
 2. Move both files to directory `~/Library/Application Scripts/com.apple.mail/`
 3. Open Mail.app's preferences pane and go to "Rules"
 4. Add a new rule with action "Run Applescript" choosing spamfilter.scpt
@@ -53,7 +53,7 @@ In addition to your own rules there are some more tests that are always performe
 * Zero-width whitespace chars, e.g., "U+FEFF"
 
 ### Bugs in Mail.app
-There seems to be a bug in Mail.app preventing the correct processing of all messages each time you receive multiple messages at once. In that case you can trigger the spam filter by selecting any remaining messages and running Mail.app rules manually via `alt+cmd+L` or via its right-click context menu.
+There seems to be a bug in Mail.app preventing the correct processing of all messages in case you receive multiple messages at once. A bug circumvention was added to spamfilter.scpt. However, if you still note unprocessed messages, you can trigger the spam filter by selecting any remaining messages and running Mail.app rules manually via `alt+cmd+L` or via its right-click context menu.
 
 ## Acknowledgments
 * [JXA-Cookbook](https://github.com/JXA-Cookbook/JXA-Cookbook/wiki)
