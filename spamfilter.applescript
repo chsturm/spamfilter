@@ -4,6 +4,7 @@
 //debugger
 
 var shouldAlertMatchDetails = false  // true: alert rule item if a rule match is found
+var shouldLogActivity = false  // true: log details about message tests to file
 
 var mail = Application.currentApplication()
 mail.includeStandardAdditions = true
@@ -94,13 +95,18 @@ function performMailActionWithMessages (messages, manualProperties) {
 				firstMessageRule = rule	
 			}
 			
+			LogActivity.logMessage(message, "first-test")
 			testMessage(rule, message)
 		}
 	}
 	
 	// no bug circumvention needed if only one message in list or user-selected list
 	if ((messages.length === 1 && firstMessageMailbox.unreadCount() === 0)
-		|| (messages.length > 1 && messages[0].id() !== messages[1].id())) return
+		  || (messages.length > 1 && messages[0].id() !== messages[1].id())
+		  || ["Deleted Messages", "Trash"].includes(firstMessageMailbox.name())) {
+		LogActivity.finish()
+		return
+	}
 	
 	// test messages not dealt with above due to bug in Mail.app
 	var retestMailbox = function () {
@@ -109,32 +115,93 @@ function performMailActionWithMessages (messages, manualProperties) {
 			unreadCount = firstMessageMailbox.unreadCount() || messages.length
 	
 		while (msgIdx < unreadCount && msgIdx < mailboxMessages.length) {
-			const message = mailboxMessages[msgIdx], readStatus = message.readStatus()
+			const message = mailboxMessages[msgIdx], readStatus = message.readStatus(),
+				junkStatus = message.junkMailStatus()
+			
+			LogActivity.logMessage(message, "secrun-test/idx."+ msgIdx)
 			
 			// don't count already tested spam messages or read messages
-			if (message.junkMailStatus() || readStatus) unreadCount++
+			if (junkStatus || readStatus) unreadCount++
 			
-			// skip already tested first message
-			if (message.id() !== messages[0].id() && !readStatus) {
-				if (testMessage(firstMessageRule, message)
-					  && firstMessageMailbox.unreadCount() === 0)
-					break
+			// test message (again)
+			if (!readStatus && testMessage(firstMessageRule, message)) {
+				// junk mail flagging failed in messages[] for-of loop due to Mail.app bug
+				if (!junkStatus && message.id() === messages[0].id())
+					unreadCount++
+					
+				if (firstMessageMailbox.unreadCount() === 0) break
 			}
 			
 			msgIdx++
 		}
 	}
 	// try multiple times to catch all unread messages in INBOX
-	for (var i=0; i<5; i++) {
+	for (var i=0; i<2; i++) {
 		console.log("more messages left: "+ firstMessageMailbox.unreadCount())
 		if (firstMessageMailbox.unreadCount() > 0) {
+			LogActivity.log("more messages left i."+ i +": "+ firstMessageMailbox.unreadCount())
+			Progress.description = "Second run testing for "+ firstMessageRule.email
 			delay(0.5)
 			retestMailbox()
 		} else break
 	}
+	LogActivity.finish()
 }
 
-/** Alert item that matched a rule; useful for enhancing rules */
+/** log all message tests in separate file for debugging if shouldLogActivity == true */
+var LogActivity = (function () {
+	if (!shouldLogActivity) {
+		// return dummy methods if logging switched off
+		const dummyFnc = function(){}
+		return {log: dummyFnc,
+		  logMessage: dummyFnc,
+		  finish: dummyFnc
+		}
+	}
+	
+	const path = ObjC.wrap(mail.pathTo("library folder", {from: "user domain", folderCreation: false}).toString() + "/Application Scripts/com.apple.mail/spamfilter.log")
+		.stringByStandardizingPath
+	var fh = $.NSFileHandle.fileHandleForWritingAtPath(path)
+	if (fh.isNil()) {
+		console.log("create new log file")
+       	$.NSFileManager.defaultManager.createFileAtPathContentsAttributes(path, undefined, undefined)
+       	fh = $.NSFileHandle.fileHandleForWritingAtPath(path)
+    }
+	if (fh.isNil()) {
+		console.log("couldn't get file handle for logging")
+		return
+	}
+	
+	/** general log function appending entry as a line to file */
+	var log = function (str) {
+		try {
+			fh.seekToEndOfFile
+			fh.writeData(ObjC.wrap(str +"\n").dataUsingEncoding($.NSUTF8StringEncoding))
+		} catch (e) {
+			console.log("failed writing to log file: "+ e.name +", "+ e.message)
+			mail.displayDialog("failed writing to log file: "+ e.name +", "+ e.message)
+			return false
+		}
+		return true
+	}
+	
+	/** log given message along with run type of test */
+	var logMessage = function (msg, runType) {
+		log(runType +","+ Date.now() +": "+ msg.dateReceived() +","+ msg.sender() +", "+ msg.subject())
+	}
+	
+	/** close file before quit */
+	var finish = function () {
+		fh.closeFile
+	}
+	
+	return {log: log,
+		  logMessage: logMessage,
+		  finish: finish
+	}
+})()
+
+/** alert item that matched a rule; useful for enhancing rules */
 function alertMatchDetails (field, item) {
 	if (!shouldAlertMatchDetails) return
 	mail.displayDialog(field +': '+ item, {withTitle: 'Spamfilter match details'})
@@ -216,6 +283,7 @@ function testMessageField (field, blacklist, message) {
 		
 		var searchTarget = searchContent
 		var searchPartStart = part.start
+
 		if (part.encoding === "base64" || part.type.indexOf("html") >= 0
 		  || part.encoding === "quoted-printable") {
 			// choose decoded string as search target
@@ -310,10 +378,16 @@ function MessagePart (start, end, type, encoding) {
 		
 		// handle transfer encoding
 		if (this.encoding === "base64") {
-			var wsFreeStr = inputStr.replace(/\s+/g, "")
-			if (wsFreeStr.startsWith("77u/")) // skip binary indicator before decode
-				wsFreeStr = wsFreeStr.substring(4)
-			this.decoded = b64DecodeUnicode(wsFreeStr, charset)
+			const firstLine = inputStr.substring(0, 80)
+			if (firstLine && firstLine.indexOf(" ") >= 0) {
+				this.decoded = inputStr
+				console.log("not a real base64 encoding")
+			} else {
+				var wsFreeStr = inputStr.replace(/\s+/g, "")
+				if (wsFreeStr.startsWith("77u/")) // skip binary indicator before decode
+					wsFreeStr = wsFreeStr.substring(4)
+				this.decoded = b64DecodeUnicode(wsFreeStr, charset)
+			}
 		}
 		else if (this.encoding === "quoted-printable") {
 			this.decoded = qpDecodeUnicode(inputStr, charset)
@@ -345,6 +419,9 @@ function getLocalHeader (headerName, searchContent, startPos) {
 	while (line[line.length-1] === ";") {
 		// another parameter in next line
 		headerEndPos = searchContent.indexOf("\n", headerEndPos+1)
+		// skip empty lines
+		if (headerEndPos-1 === lineEndPos) continue
+		
 		line = searchContent.substring(lineEndPos+1, headerEndPos).trim()
 		lineEndPos = headerEndPos
 	}
@@ -701,8 +778,8 @@ var base64Handler = (function () {
 	function placeHoldersCount (b64) {
   		var len = b64.length
   		if (len % 4 > 0 && (len+2) % 4 > 0) {
-		mail.displayDialog("error"+len+' '+b64.slice(-50));
-    	 throw new Error('Invalid string. Length '+len+' must be a multiple of 4')
+			console.log("error: "+len+' '+b64.slice(-50));
+    	 	throw new Error('Invalid string. Length '+len+' must be a multiple of 4')
   		}
   		return b64[len - 2] === '=' ? 2 : b64[len - 1] === '=' ? 1 : 0
 	}
