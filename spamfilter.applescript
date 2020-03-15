@@ -100,10 +100,15 @@ function performMailActionWithMessages (messages, manualProperties) {
 		}
 	}
 	
-	// no bug circumvention needed if only one message in list or user-selected list
+	/* no bug circumvention needed if only one message in list or user-selected list,
+	   already in trash or other spamfilter instance testing on account
+	*/
+	// try to get lock of current account
+	const accountMutex = new RunCoordinator(firstMessageMailbox.account().id())
 	if ((messages.length === 1 && firstMessageMailbox.unreadCount() === 0)
 		  || (messages.length > 1 && messages[0].id() !== messages[1].id())
-		  || ["Deleted Messages", "Trash"].includes(firstMessageMailbox.name())) {
+		  || ["Deleted Messages", "Trash"].includes(firstMessageMailbox.name())
+		  || ! accountMutex.tryLock()) {
 		LogActivity.finish()
 		return
 	}
@@ -140,12 +145,13 @@ function performMailActionWithMessages (messages, manualProperties) {
 		console.log("more messages left: "+ firstMessageMailbox.unreadCount())
 		if (firstMessageMailbox.unreadCount() > 0) {
 			LogActivity.log("more messages left i."+ i +": "+ firstMessageMailbox.unreadCount())
-			Progress.description = "Second run testing for "+ firstMessageRule.email
-			delay(0.5)
+			Progress.description = firstMessageRule.email +"Second run test"
 			retestMailbox()
 		} else break
 	}
+	
 	LogActivity.finish()
+	accountMutex.unlock()
 }
 
 /** log all message tests in separate file for debugging if shouldLogActivity == true */
@@ -199,6 +205,36 @@ var LogActivity = (function () {
 		  logMessage: logMessage,
 		  finish: finish
 	}
+})()
+
+/** manages mutex locks accessible to different spamfilter instances (osascript processes) */
+var RunCoordinator = (function () {
+	const dir = mail.pathTo("library folder", {from: "user domain", folderCreation: false}).toString() + "/Application Scripts/com.apple.mail/"
+	var path = '', mutex = null
+	
+	/** constructor creates path to mutex file */
+	function RunCoordinator (resourceId) {
+		path = ObjC.wrap(dir +'.'+ resourceId +'.spamfilter.lock') 
+	}
+	
+	/** try to get lock for specified resource id and return result */
+	RunCoordinator.prototype.tryLock = function () {
+		mutex = $.NSDistributedLock.lockWithPath(path)
+		
+		// force unlock if older than 600 sec as normal unlocking seemed to fail
+		var lockDate = Math.abs(ObjC.unwrap(mutex.lockDate.timeIntervalSinceNow)),
+			refDate = ObjC.unwrap(mutex.lockDate.timeIntervalSinceReferenceDate)
+		if (lockDate < refDate && lockDate > 600) mutex.breakLock
+		
+		return ObjC.unwrap(mutex.tryLock)
+	}
+	
+	/** unlock existing mutex */
+	RunCoordinator.prototype.unlock = function () {
+		if (mutex) mutex.unlock
+	}
+	
+	return RunCoordinator
 })()
 
 /** alert item that matched a rule; useful for enhancing rules */
