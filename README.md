@@ -1,5 +1,5 @@
 # spamfilter for Apple Mail.app
-This spam filter lets you easily define filter rules for each of your email accounts individually. It makes use of Mail.app's scripting interface for Applescript and JXA.
+This spam filter lets you easily define keyword-based filter rules for each of your email accounts individually. It makes use of Mail.app's scripting interface for Applescript and JXA.
 Spam messages are marked as Junk and moved to the trash folder.
 
 ## Installation
