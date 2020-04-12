@@ -95,7 +95,7 @@ function performMailActionWithMessages (messages, manualProperties) {
 				firstMessageRule = rule	
 			}
 			
-			LogActivity.logMessage(message, "first-test")
+			ActivityLog.logMessage(message, "firstrun-test/"+ rule.email)
 			testMessage(rule, message)
 		}
 	}
@@ -108,8 +108,10 @@ function performMailActionWithMessages (messages, manualProperties) {
 	if ((messages.length === 1 && firstMessageMailbox.unreadCount() === 0)
 		  || (messages.length > 1 && messages[0].id() !== messages[1].id())
 		  || ["Deleted Messages", "Trash"].includes(firstMessageMailbox.name())
-		  || ! accountMutex.tryLock()) {
-		LogActivity.finish()
+		  || !accountMutex.tryLock()) {
+		if (accountMutex.gotLock() === false)
+			ActivityLog.log("no-lock/"+ firstMessageRule.email)
+		ActivityLog.finish()
 		return
 	}
 	
@@ -123,7 +125,8 @@ function performMailActionWithMessages (messages, manualProperties) {
 			const message = mailboxMessages[msgIdx], readStatus = message.readStatus(),
 				junkStatus = message.junkMailStatus()
 			
-			LogActivity.logMessage(message, "secrun-test/idx."+ msgIdx)
+			ActivityLog.logMessage(message, "secrun-test/"+ firstMessageRule.email +"/idx."
+				+ msgIdx)
 			
 			// don't count already tested spam messages or read messages
 			if (junkStatus || readStatus) unreadCount++
@@ -142,20 +145,22 @@ function performMailActionWithMessages (messages, manualProperties) {
 	}
 	// try multiple times to catch all unread messages in INBOX
 	for (var i=0; i<2; i++) {
+		delay(0.5)
 		console.log("more messages left: "+ firstMessageMailbox.unreadCount())
 		if (firstMessageMailbox.unreadCount() > 0) {
-			LogActivity.log("more messages left i."+ i +": "+ firstMessageMailbox.unreadCount())
-			Progress.description = firstMessageRule.email +"Second run test"
+			ActivityLog.log("more-messages/"+ firstMessageRule.email +"/loop."+ i +": "
+				+ firstMessageMailbox.unreadCount())
+			Progress.description = firstMessageRule.email +": sec run test"
 			retestMailbox()
 		} else break
 	}
 	
-	LogActivity.finish()
+	ActivityLog.finish()
 	accountMutex.unlock()
 }
 
 /** log all message tests in separate file for debugging if shouldLogActivity == true */
-var LogActivity = (function () {
+var ActivityLog = (function () {
 	if (!shouldLogActivity) {
 		// return dummy methods if logging switched off
 		const dummyFnc = function(){}
@@ -193,12 +198,17 @@ var LogActivity = (function () {
 	
 	/** log given message along with run type of test */
 	var logMessage = function (msg, runType) {
-		log(runType +","+ Date.now() +": "+ msg.dateReceived() +","+ msg.sender() +", "+ msg.subject())
+		log(runType +",ts."+ Date.now() +": "+ msg.dateReceived() +",id."+ msg.id() +","
+			+ msg.sender() +", "+ msg.subject())
 	}
 	
 	/** close file before quit */
 	var finish = function () {
-		fh.closeFile
+		try {
+			fh.closeFile
+		} catch (e) {
+			console.log("failed closing log file: "+ e.name +", "+ e.message)
+		}
 	}
 	
 	return {log: log,
@@ -210,7 +220,7 @@ var LogActivity = (function () {
 /** manages mutex locks accessible to different spamfilter instances (osascript processes) */
 var RunCoordinator = (function () {
 	const dir = mail.pathTo("library folder", {from: "user domain", folderCreation: false}).toString() + "/Application Scripts/com.apple.mail/"
-	var path = '', mutex = null
+	var path = '', mutex = null, gotLock = null
 	
 	/** constructor creates path to mutex file */
 	function RunCoordinator (resourceId) {
@@ -226,7 +236,13 @@ var RunCoordinator = (function () {
 			refDate = ObjC.unwrap(mutex.lockDate.timeIntervalSinceReferenceDate)
 		if (lockDate < refDate && lockDate > 600) mutex.breakLock
 		
-		return ObjC.unwrap(mutex.tryLock)
+		gotLock = ObjC.unwrap(mutex.tryLock)
+		return gotLock
+	}
+	
+	/** returns true if got lock else false; null if tryLock() not yet called */
+	RunCoordinator.prototype.gotLock = function () {
+		return gotLock
 	}
 	
 	/** unlock existing mutex */
