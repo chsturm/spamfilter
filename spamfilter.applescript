@@ -30,6 +30,9 @@ function loadRules (path) {
 			console.log("No rules found!")
 	} catch (e) {
 		console.log(e.name +': '+ e.message)
+		if (e instanceof SyntaxError && !config)
+			mail.displayDialog("JSON syntax error in rules file on line "+ e.lineNumber +": "
+				+ e.message)
 	}
 	
 	if (!config || !config.rulesList) return []
@@ -277,7 +280,7 @@ function testSenderForFullName (whitelist, message) {
 	const from = message.sender()
 	const addressIdx = from.indexOf("<")  // e.g. X Y <xy@abc.com>
 	if (addressIdx <= 0) return false
-	const name = from.substring(0, addressIdx).trim()
+	const name = from.substring(0, addressIdx).trim().replace(/"/g, '')
 	if (name === "" || name.indexOf(" ") > 0) return false
 	const res = !whitelist.list.includes(name)
 	if (res) alertMatchDetails('Sender with full name test', 'Found only one word')
