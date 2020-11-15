@@ -95,7 +95,9 @@ function performMailActionWithMessages (messages, manualProperties) {
 			// store mailbox and account rule of first message to test remaining ones
 			if (!firstMessageMailbox) {
 				firstMessageMailbox = message.mailbox()
-				firstMessageRule = rule	
+				firstMessageRule = rule
+				Progress.description = rule.email
+				delay(0.1)  // give Mail a chance to update to correct message attributes 
 			}
 			
 			ActivityLog.logMessage(message, "firstrun-test/"+ rule.email)
@@ -111,12 +113,14 @@ function performMailActionWithMessages (messages, manualProperties) {
 	if ((messages.length === 1 && firstMessageMailbox.unreadCount() === 0)
 		  || (messages.length > 1 && messages[0].id() !== messages[1].id())
 		  || ["Deleted Messages", "Trash"].includes(firstMessageMailbox.name())
-		  || !accountMutex.tryLock()) {
+		  || accountMutex.tryLock() !== true) {
 		if (accountMutex.gotLock() === false)
 			ActivityLog.log("no-lock/"+ firstMessageRule.email)
 		ActivityLog.finish()
 		return
 	}
+	if (accountMutex.gotLock() === true)
+		ActivityLog.log("got-lock/"+ firstMessageRule.email)
 	
 	// test messages not dealt with above due to bug in Mail.app
 	var retestMailbox = function () {
@@ -158,8 +162,8 @@ function performMailActionWithMessages (messages, manualProperties) {
 		} else break
 	}
 	
-	ActivityLog.finish()
 	accountMutex.unlock()
+	ActivityLog.finish()
 }
 
 /** log all message tests in separate file for debugging if shouldLogActivity == true */
@@ -222,7 +226,8 @@ var ActivityLog = (function () {
 
 /** manages mutex locks accessible to different spamfilter instances (osascript processes) */
 var RunCoordinator = (function () {
-	const dir = mail.pathTo("library folder", {from: "user domain", folderCreation: false}).toString() + "/Application Scripts/com.apple.mail/"
+	const dir = mail.pathTo("library folder", {from: "user domain", folderCreation: false}
+		).toString() + "/Application Scripts/com.apple.mail/"
 	var path = '', mutex = null, gotLock = null
 	
 	/** constructor creates path to mutex file */
@@ -233,13 +238,20 @@ var RunCoordinator = (function () {
 	/** try to get lock for specified resource id and return result */
 	RunCoordinator.prototype.tryLock = function () {
 		mutex = $.NSDistributedLock.lockWithPath(path)
-		
+
 		// force unlock if older than 600 sec as normal unlocking seemed to fail
-		var lockDate = Math.abs(ObjC.unwrap(mutex.lockDate.timeIntervalSinceNow)),
-			refDate = ObjC.unwrap(mutex.lockDate.timeIntervalSinceReferenceDate)
-		if (lockDate < refDate && lockDate > 600) mutex.breakLock
+		if (!mutex.lockDate.isNil()) {
+			// Foundation.fw bug: lockDate set to reference date (docs say nil) if no lock present
+			var nowIntvl = Math.abs(ObjC.unwrap(mutex.lockDate.timeIntervalSinceNow)),
+				refIntvl = ObjC.unwrap(mutex.lockDate.timeIntervalSinceReferenceDate)
+			if (nowIntvl < refIntvl && nowIntvl > 600) mutex.breakLock
+		}
 		
-		gotLock = ObjC.unwrap(mutex.tryLock)
+		try {
+			gotLock = ObjC.unwrap(mutex.tryLock)
+		} catch (e) {
+			console.log("mutex locking error: "+ e.message)
+		}
 		return gotLock
 	}
 	
@@ -252,7 +264,7 @@ var RunCoordinator = (function () {
 	RunCoordinator.prototype.unlock = function () {
 		if (mutex) mutex.unlock
 	}
-	
+		
 	return RunCoordinator
 })()
 
