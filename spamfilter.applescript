@@ -46,7 +46,7 @@ function loadRules (path) {
 	but to prevent word-based blacklisting in spam.
 	e.g. zero-width spaces like byte order mark
 */
-var cheatChars = ['\uFEFF','\u200B', '\u2060']
+var cheatChars = ['\uFEFF','\u200B', '\u200C', '\u2060']
 
 /** uncommon file extensions */
 var fileExtensions = ['.7z', '.exe', '.jpg.zip']
@@ -84,8 +84,8 @@ function performMailActionWithMessages (messages, manualProperties) {
 		if (firstMessageMailbox && message.id() === messages[0].id()) break
 	
 		// search matching rule based on email address
+		let account = message.mailbox().account()
 		let rule = rulesList.find(function(rule) {
-			let account = message.mailbox().account()
 			return account.emailAddresses().some(function(address){
 				return address === rule.email
 			})
@@ -97,12 +97,20 @@ function performMailActionWithMessages (messages, manualProperties) {
 				firstMessageMailbox = message.mailbox()
 				firstMessageRule = rule
 				Progress.description = rule.email
-				delay(0.1)  // give Mail a chance to update to correct message attributes 
+				delay(0.2)
 			}
 			
 			ActivityLog.logMessage(message, "firstrun-test/"+ rule.email)
 			testMessage(rule, message)
 		}
+		else
+			ActivityLog.log("no-rules/"+ account.emailAddresses()[0])
+	}
+	
+	// return if no rules exist
+	if (!firstMessageRule) {
+		ActivityLog.finish()
+		return
 	}
 	
 	/* no bug circumvention needed if only one message in list or user-selected list,
@@ -139,13 +147,18 @@ function performMailActionWithMessages (messages, manualProperties) {
 			if (junkStatus || readStatus) unreadCount++
 			
 			// test message (again)
-			if (!readStatus && testMessage(firstMessageRule, message)) {
+			if (!readStatus) {
+				testMessage(firstMessageRule, message)
+				if (firstMessageMailbox.unreadCount() === 0) break
+			}
+				
+			/*if (!readStatus && testMessage(firstMessageRule, message)) {
 				// junk mail flagging failed in messages[] for-of loop due to Mail.app bug
-				if (!junkStatus && message.id() === messages[0].id())
+				if (!message.junkMailStatus() && message.id() === messages[0].id())
 					unreadCount++
 					
 				if (firstMessageMailbox.unreadCount() === 0) break
-			}
+			}*/
 			
 			msgIdx++
 		}
@@ -307,14 +320,21 @@ function testMessageField (field, blacklist, message) {
 		// determine boundary for multipart messages
 		var headers = message.allHeaders()
 		var boundary = ''
-	} else // i.e. sender, subject
+	} else {  // i.e. sender, subject
+		// delete unicode cheat chars
+		const normalizedContent = cheatChars.reduce(function(res, item) {
+			return res.replace(new RegExp(item, 'g'), '')
+		}, searchContent)
+		
 		return blacklist.list.some(function(item) {
-			if (item.length === 0)
-				return false // avoid empty strings created by accident
-			const res = searchContent.includes(item);  // true if match in blacklist
+			// skip empty strings created by accident
+			if (item.length === 0) return false
+			
+			const res = normalizedContent.includes(item);  // true if match in blacklist
 			if (res) alertMatchDetails('Field "'+ field +'"', item)
 			return res
 		})
+	}
 
 	// search message body from raw source
 	var initSearchPos = 0
@@ -365,20 +385,20 @@ function testMessageField (field, blacklist, message) {
 		
 		// check for cheating zero-width spaces once per message part
 		if (messageComponentsHandler.isParsed === false && cheatChars.some(function(c) {
-				const res = searchPart.indexOf(c, 1) > 0
-				if (res) {
-					const unicode = 'U+'+ c.codePointAt(0).toString(16).toUpperCase()
-					alertMatchDetails('Cheat char', unicode)
-				}
-				return res
+			  const res = searchPart.indexOf(c, 1) > 0
+			  if (res) {
+			  	const unicode = 'U+'+ c.codePointAt(0).toString(16).toUpperCase()
+				alertMatchDetails('Cheat char', unicode)
+			  }
+			  return res
 			})
 		)
 			return true  // cheat char detected => spam mail
 			  
 		if (blacklist.list.some(function(item) {
-				const res = searchPart.indexOf(item) !== -1 && item.length > 0
-				if (res) alertMatchDetails('Text content', item)
-				return res
+			  const res = searchPart.indexOf(item) !== -1 && item.length > 0
+			  if (res) alertMatchDetails('Text content', item)
+			  return res
 			})
 		)
 			return true  // match in blacklist
@@ -470,15 +490,29 @@ function MessagePart (start, end, type, encoding) {
 
 /** returns content of next specified header as well as start and end position of the header line relative to searchContent */
 function getLocalHeader (headerName, searchContent, startPos) {
-	headerName = "\n" + headerName + ":"  // e.g. "\nContent-Type:"
-	var headerStartPos = searchContent.indexOf(headerName, startPos)
-	if (headerStartPos++ === -1) {  // skip leading \n by ++
-		// header name not found => try again with lower-case, e.g., "\nContent-type:"
-		headerName = "\n" + headerName[1] + headerName.substring(2).toLowerCase();
-		headerStartPos = searchContent.indexOf(headerName, startPos)
-		if (headerStartPos++ === -1)
-			return false  // header not found
+	headerName += ":"
+	// find first occurence case-insensitive, e.g., "\nContent-Type:" or "\ncontent-type:"
+	var headerStartPos = searchContent.substring(startPos)
+		.search(new RegExp("\\n"+ headerName, "i"))
+	if (headerStartPos === -1) return false  // header not found
+	/*const headerNameVersions = ["\n"+ headerName + ":",  // e.g. "\nContent-Type:"
+		"\n"+ headerName[0] + headerName.substring(1).toLowerCase() +":",  // "\nContent-type:"
+		"\n"+ headerName.toLowerCase() +":"  // completely lower-case
+	]
+	var headerStartPos = searchContent.length
+	// find first occurence amongst all header versions
+	for (var i=0; i<headerNameVersions.length; i++) {
+		var pos = searchContent.indexOf(headerNameVersions[i], startPos)
+		if (pos < headerStartPos && pos > -1) {
+			headerStartPos = pos
+			headerName = headerNameVersions[i]
+		}
 	}
+	if (headerStartPos === searchContent.length) return false  // header not found
+	*/
+	// make index from substring() relative to searchContent and skip leading "\n" by +1
+	headerStartPos += startPos + 1
+	
 	var headerEndPos = searchContent.indexOf("\n", headerStartPos + headerName.length)
 	var line = searchContent.substring(headerStartPos + headerName.length, headerEndPos).trim()
 	var lineEndPos = headerEndPos
@@ -611,7 +645,8 @@ function MessageComponentsHandler (rawMessage, contentStartPos, boundary) {
 			return true
 		}
 		
-		if (part.encoding !== "base64" || part.type.includes("text/"))
+		if (part.encoding !== "base64" || part.type.includes("text/")
+			  || part.type.includes("message/"))
 			return true
 		
 		// only accessed once per base64 part, because messagePartsList excludes them
