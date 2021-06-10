@@ -27,7 +27,13 @@ The configuration of the script as well as your custom rules are stored in `spam
 		"fromWhitelist": {"shouldTest": true, "list": ["GitHub"]},
 		"senderBlacklist": {"list": ["Jane Doe", "support@evil.org"]},
 		"subjectBlacklist": {"list": []},
-		"contentBlacklist": {"list": ["Dear customer"]}
+		"contentBlacklist": {"list": ["Dear customer"]},
+		"mailboxList": [{"name": "Another Mailbox",
+		    "fromWhitelist": {"shouldTest": false, "list": []},
+		    "senderBlacklist": {"list": []},
+		    "subjectBlacklist": {"list": ["50% off"]},
+		    "contentBlacklist": {"list": []}
+		}]
 	}
   ]
 }
@@ -35,12 +41,13 @@ The configuration of the script as well as your custom rules are stored in `spam
 
 Apart from your account-specific rules the JSON object above comprises general settings like `shouldAlertMatchDetails` that always affect the filtering regardless of your rules. shouldAlertMatchDetails set to true (boolean) helps debugging false-positives by telling you which rule has matched.
 
-The `rulesList` property contains the array of mail accounts for which you want to enable filtering. Accounts not listed there are not filtered at all. Here's a description of an account rule:
+The `rulesList` property contains the array of mail accounts for which you want to enable filtering. Accounts not listed there are not filtered at all. Here's a description of an account rule for its default INBOX:
 * `email` indicates the mail address of your account.
 * `fromWhitelist` controls the test wether the sender contains a full name (first name and last name) or just a single word. If `shouldTest` is true, one-word names are considered as spam matches. Whitelist exceptions are likely to be necessary then, e.g., for GitHub in the foo@bar.com rule above.
 * `senderBlacklist` compares the "From" header of the message with all items in the corresponding blacklist. Those items can be names,  email addresses or only string components of them.
 * `subjectBlacklist` compares the "Subject" header of the message with all items in the blacklist.
 * `contentBlacklist` compares the message content with all items in the blacklist. Only text content is tested. Binary data is skipped.
+* `mailboxList` [optional] a list of rule objects for additional mailboxes different from the default INBOX. Those rules work analogously to the ones above, but only for a specific mailbox.
 
 All comparisons with list items are case-sensitive.
 
@@ -54,6 +61,7 @@ In addition to your own rules there are some more tests that are always performe
 
 ### Bugs in Mail.app
 There seems to be a bug in Mail.app preventing the correct processing of all messages in case you receive multiple messages at once. A bug circumvention was added to spamfilter.scpt. However, if you still note unprocessed messages, you can trigger the spam filter by selecting any remaining messages and running Mail.app rules manually via `alt+cmd+L` or via its right-click context menu.
+Mail only triggers its built-in rule system for new messages stored to the default INBOX, but not in other mailboxes your server may provide. Automatic filtering on all mailboxes is therefore performed as soon as a new message is received in INBOX.
 
 ## Acknowledgments
 * [JXA-Cookbook](https://github.com/JXA-Cookbook/JXA-Cookbook/wiki)
