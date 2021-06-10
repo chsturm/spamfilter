@@ -61,6 +61,7 @@ In addition to your own rules there are some more tests that are always performe
 
 ### Bugs in Mail.app
 There seems to be a bug in Mail.app preventing the correct processing of all messages in case you receive multiple messages at once. A bug circumvention was added to spamfilter.scpt. However, if you still note unprocessed messages, you can trigger the spam filter by selecting any remaining messages and running Mail.app rules manually via `alt+cmd+L` or via its right-click context menu.
+
 Mail only triggers its built-in rule system for new messages stored to the default INBOX, but not in other mailboxes your server may provide. Automatic filtering on all mailboxes is therefore performed as soon as a new message is received in INBOX.
 
 ## Acknowledgments
