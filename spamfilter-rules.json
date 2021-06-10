@@ -13,7 +13,13 @@
 		"fromWhitelist": {"shouldTest": true, "list": ["GitHub"]},
 		"senderBlacklist": {"list": ["Jane Doe", "support@evil.org"]},
 		"subjectBlacklist": {"list": []},
-		"contentBlacklist": {"list": ["Dear customer"]}
+		"contentBlacklist": {"list": ["Dear customer"]},
+		"mailboxList": [{"name": "Another Mailbox",
+		    "fromWhitelist": {"shouldTest": false, "list": []},
+		    "senderBlacklist": {"list": []},
+		    "subjectBlacklist": {"list": ["50% off"]},
+		    "contentBlacklist": {"list": []}
+		}]
 	}
   ]
 }
