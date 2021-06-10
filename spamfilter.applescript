@@ -4,15 +4,16 @@
 //debugger
 
 var shouldAlertMatchDetails = false  // true: alert rule item if a rule match is found
-var shouldLogActivity = false  // true: log details about message tests to file
+const shouldLogActivity = false  // true: log details about message tests to file
+const mutexLifetime = 600  // duration in seconds after which a mutex lock will be reset
 
-var mail = Application.currentApplication()
+const mail = Application.currentApplication()
 mail.includeStandardAdditions = true
 ObjC.import('Foundation')
 
 /** load blacklist rules */
-var path = mail.pathTo("library folder", {from: "user domain", folderCreation: false}).toString() + "/Application Scripts/com.apple.mail/spamfilter-rules.json"
-var rulesList = loadRules(path)
+const path = mail.pathTo("library folder", {from: "user domain", folderCreation: false}).toString() + "/Application Scripts/com.apple.mail/spamfilter-rules.json"
+const rulesList = loadRules(path)
 
 function loadRules (path) {
 	try {
@@ -46,141 +47,257 @@ function loadRules (path) {
 	but to prevent word-based blacklisting in spam.
 	e.g. zero-width spaces like byte order mark
 */
-var cheatChars = ['\uFEFF','\u200B', '\u200C', '\u2060']
+const cheatChars = ['\uFEFF','\u200B', '\u200C', '\u2060']
 
 /** uncommon file extensions */
-var fileExtensions = ['.7z', '.exe', '.jpg.zip']
+const fileExtensions = ['.7z', '.exe', '.jpg.zip']
 
 /** uncommon charsets (in lowercase) */
-var charsetBlacklist = ['windows-1251'/* cyrillic*/, 'gb2312'/*chinese*/, 'gb18030'/*chinese*/]
+const charsetBlacklist = ['windows-1251'/* cyrillic*/, 'gb2312'/*chinese*/, 'gb18030'/*chinese*/]
 
 /** handler called by Apple Mail when applying rules on messages */
 function performMailActionWithMessages (messages, manualProperties) {
 	mail.downloadHtmlAttachments = false
 	
-	var testMessage = function(rule, message) {
-		// delete message as soon as a blacklist match is detected
-		if (testSelfAddressedForFullName(rule.email, message)
-			 || testSenderForFullName(rule.fromWhitelist, message)
-			 || testMessageField('sender', rule.senderBlacklist, message)
-			 || testMessageField('subject', rule.subjectBlacklist, message)
-			 || testMessageField('source', rule.contentBlacklist, message)) {
-			// mark message as processed by spamfilter for debugging
-			/*message.flagIndex = 6;	// grey
-			message.flaggedStatus = true;*/
-				
-			moveToTrash(message)
-			delay(0.6)  // avoid DoS of your mail server
-			return true
-		} else {
-			console.log("No blacklist matches found")
-			return false
-		}
-	}
-
-	var firstMessageMailbox = null, firstMessageRule = null
-	for (let message of messages) {
-		// skip remaining messages if identical to first one due to bug in Mail.app
-		if (firstMessageMailbox && message.id() === messages[0].id()) break
-	
-		// search matching rule based on email address
-		let account = message.mailbox().account()
-		let rule = rulesList.find(function(rule) {
-			return account.emailAddresses().some(function(address){
-				return address === rule.email
-			})
-		})
-	
-		if (rule) {
-			// store mailbox and account rule of first message to test remaining ones
-			if (!firstMessageMailbox) {
-				firstMessageMailbox = message.mailbox()
-				firstMessageRule = rule
-				Progress.description = rule.email
-				delay(0.2)
-			}
-			
-			ActivityLog.logMessage(message, "firstrun-test/"+ rule.email)
-			testMessage(rule, message)
-		}
-		else
-			ActivityLog.log("no-rules/"+ account.emailAddresses()[0])
-	}
+	const filterHandler = new SpamFilterHandler()
+	filterHandler.filterMessageList(messages)
 	
 	// return if no rules exist
-	if (!firstMessageRule) {
+	if (!filterHandler.mailboxRule) {
 		ActivityLog.finish()
 		return
 	}
 	
 	/* no bug circumvention needed if only one message in list or user-selected list,
-	   already in trash or other spamfilter instance testing on account
+	   already in trash or other spamfilter instance running on account
 	*/
-	// try to get lock of current account
-	const accountMutex = new RunCoordinator(firstMessageMailbox.account().id())
-	if ((messages.length === 1 && firstMessageMailbox.unreadCount() === 0)
+	// try to get lock of current account if more messages are available to filter
+	const accountMutex = new RunCoordinator(filterHandler.mailbox.account().id())
+	if ((messages.length === 1 && filterHandler.mailbox.unreadCount() === 0)
 		  || (messages.length > 1 && messages[0].id() !== messages[1].id())
-		  || ["Deleted Messages", "Trash"].includes(firstMessageMailbox.name())
+		  || ["Deleted Messages", "Trash"].includes(filterHandler.mailbox.name())
 		  || accountMutex.tryLock() !== true) {
 		if (accountMutex.gotLock() === false)
-			ActivityLog.log("no-lock/"+ firstMessageRule.email)
+			ActivityLog.log("no-lock/"+ filterHandler.mailboxRule.email)
 		ActivityLog.finish()
 		return
 	}
 	if (accountMutex.gotLock() === true)
-		ActivityLog.log("got-lock/"+ firstMessageRule.email)
+		ActivityLog.log("got-lock/"+ filterHandler.mailboxRule.email)
 	
-	// test messages not dealt with above due to bug in Mail.app
-	var retestMailbox = function () {
-		// chronological join of 'Deleted Messages' since startup and 'INBOX' 
-		var mailboxMessages = firstMessageMailbox.messages(), msgIdx = 0,
-			unreadCount = firstMessageMailbox.unreadCount() || messages.length
+	// filter messages not dealt with above due to bug in Mail.app
+	// => filter the whole mailbox of the first message given in messages arg
+	filterHandler.filterCurrentMailbox()
 	
-		while (msgIdx < unreadCount && msgIdx < mailboxMessages.length) {
-			const message = mailboxMessages[msgIdx], readStatus = message.readStatus(),
-				junkStatus = message.junkMailStatus()
-			
-			ActivityLog.logMessage(message, "secrun-test/"+ firstMessageRule.email +"/idx."
-				+ msgIdx)
-			
-			// don't count already tested spam messages or read messages
-			if (junkStatus || readStatus) unreadCount++
-			
-			// test message (again)
-			if (!readStatus) {
-				testMessage(firstMessageRule, message)
-				if (firstMessageMailbox.unreadCount() === 0) break
-			}
-				
-			/*if (!readStatus && testMessage(firstMessageRule, message)) {
-				// junk mail flagging failed in messages[] for-of loop due to Mail.app bug
-				if (!message.junkMailStatus() && message.id() === messages[0].id())
-					unreadCount++
-					
-				if (firstMessageMailbox.unreadCount() === 0) break
-			}*/
-			
-			msgIdx++
-		}
-	}
-	// try multiple times to catch all unread messages in INBOX
-	for (var i=0; i<2; i++) {
-		delay(0.5)
-		console.log("more messages left: "+ firstMessageMailbox.unreadCount())
-		if (firstMessageMailbox.unreadCount() > 0) {
-			ActivityLog.log("more-messages/"+ firstMessageRule.email +"/loop."+ i +": "
-				+ firstMessageMailbox.unreadCount())
-			Progress.description = firstMessageRule.email +": sec run test"
-			retestMailbox()
-		} else break
-	}
+	// also filter custom mailboxes having some rules defined
+	filterHandler.filterAccountMailboxes()
 	
 	accountMutex.unlock()
 	ActivityLog.finish()
 }
 
+/** Handles all spam filter operations on single messages, message lists, mailboxes and accounts
+*/
+function SpamFilterHandler () {
+	this.mailbox = null
+	this.mailboxRule = null
+	this.accountRules = null
+	this.account = null
+	this.accountMailboxes = null
+}
+/** Applies spam filter operation on given message list;
+	Defines mailbox, rules and account properties for subsequent filtering
+*/
+SpamFilterHandler.prototype.filterMessageList = function(messageList) {
+	if (!Array.isArray(rulesList)) {
+		mail.displayDialog("No rules list found in json file")
+		return
+	}
+	
+	for (let message of messageList) {
+		// skip remaining messages if identical to first one due to bug in Mail.app
+		if (this.mailbox && message.id() === messageList[0].id()) break
+	
+		// search matching rule based on email address
+		const mailbox = message.mailbox()
+		const rule = this.getRuleAndAccountFromMailbox(mailbox)
+	
+		if (!rule) {
+			ActivityLog.log("no-rules/"+ this.account.emailAddresses[0])
+			return
+		}
+		
+		// store mailbox and account rule of first message to test remaining ones
+		if (!this.mailbox) {
+			this.mailbox = mailbox
+			this.mailboxRule = rule
+			//messageMeta.accountRules = accountRules
+			if (Progress) Progress.description = rule.email
+			delay(0.2)
+		}
+		
+		ActivityLog.logMessage(message, "firstrun-test/"+ rule.email)
+		this.filterMessage(rule, message)
+	}
+}
+
+/** Returns the correct rule in json rules file for given mailbox;
+	Sets account rule set
+*/
+SpamFilterHandler.prototype.getRuleAndAccountFromMailbox = function(mailbox) {
+	this.account = mailbox.account()
+	const boxName = mailbox.name(),
+		accountAddressList = this.account.emailAddresses()
+		
+	// search account specific rules object
+	const accountRules = rulesList.find(function(rule) {
+		return accountAddressList.some(function(address){
+			return address === rule.email
+		})
+	})
+	if (!accountRules) return null
+	
+	// choose either the default rule for INBOX or one for cutom mailboxes
+	let rule = null
+	if (boxName.includes('INBOX')) {
+		rule = {email: accountRules.email,
+			fromWhitelist: accountRules.fromWhitelist,
+			senderBlacklist: accountRules.senderBlacklist,
+			subjectBlacklist: accountRules.subjectBlacklist,
+			contentBlacklist: accountRules.contentBlacklist
+		}
+	} else if (Array.isArray(accountRules.mailboxList)
+		  && accountRules.mailboxList.length > 0) {
+		rule = accountRules.mailboxList.find(function(rule){
+			return boxName === rule.name
+		})
+		if (rule) rule.email = accountRules.email
+	}
+	
+	this.accountRules = accountRules
+	return rule
+}
+
+/** Applies spam filter operation on given message */
+SpamFilterHandler.prototype.filterMessage = function(rule, message) {
+	// delete message as soon as a blacklist match is detected
+	if (testSelfAddressedForFullName(rule.email, message)
+		 || testSenderForFullName(rule.fromWhitelist, message)
+		 || testMessageField('sender', rule.senderBlacklist, message)
+		 || testMessageField('subject', rule.subjectBlacklist, message)
+		 || testMessageField('source', rule.contentBlacklist, message)) {
+		// mark message as processed by spamfilter for debugging
+		/*message.flagIndex = 6;	// grey
+		message.flaggedStatus = true;*/
+				
+		this.moveToTrash(message)
+		delay(0.6)  // avoid DoS of your mail server
+		return true
+	} else {
+		console.log("No blacklist matches found")
+		return false
+	}
+}
+/** moves specified message to trash folder of its mail account */
+SpamFilterHandler.prototype.moveToTrash = function(mes) {
+	mes.junkMailStatus = true
+	//mes.deletedStatus = true // message lost in the Nirwana
+
+	if (!this.account) mail.displayDialog("Account of mailbox undefined")
+	
+	// get trash mailbox of account
+	const boxList = this.accountMailboxes || (this.accountMailboxes = this.account.mailboxes())
+	if (!boxList || boxList.length === 0) mail.displayDialog("Mailbox list undefined")
+	
+	var trash = boxList.find(function(box){
+		var boxName = box.name()
+		var exists = boxName.includes("Deleted Messages")
+		return exists || boxName.includes("Trash")
+	});
+	if (!trash) {
+		mail.displayDialog("Trash undefined for account " + this.account.name())
+		return
+	}
+
+	mes.mailbox = trash()
+	//mail.checkForNewMail(account)
+}
+
+
+/** Applies spam filter operation once on given mailbox using given rule */
+SpamFilterHandler.prototype.filterMailbox = function(boxRule, mailbox) {
+	// chronological join of 'Deleted Messages' since startup and 'INBOX' 
+	var mailboxMessages = mailbox.messages(), msgIdx = 0,
+		unreadCount = mailbox.unreadCount() || messages.length
+	
+	while (msgIdx < unreadCount && msgIdx < mailboxMessages.length) {
+		const message = mailboxMessages[msgIdx], readStatus = message.readStatus(),
+			junkStatus = message.junkMailStatus()
+			
+		ActivityLog.logMessage(message, "secrun-test/"+ boxRule.email +"/idx."
+			+ msgIdx)
+		
+		// don't count already tested spam messages or read messages
+		if (junkStatus || readStatus) unreadCount++
+		
+		// test message (again)
+		if (!readStatus) {
+			this.filterMessage(boxRule, message)
+			if (mailbox.unreadCount() === 0) break
+		}
+		
+		msgIdx++
+	}
+}
+
+/** Applies spam filter operation on predefined mailbox, e.g., by filterMessageList().
+	This method is more reliable than filterMailbox() due to bugs in Mail.app
+*/
+SpamFilterHandler.prototype.filterCurrentMailbox = function() {
+	if (!this.mailbox || !this.account) return
+	
+	this.accountMailboxes = this.account.mailboxes()
+	this.filterMailboxInLoops(this.mailboxRule, this.mailbox)
+}
+
+/** Applies multiple iterations of spam filter operation on given mailbox using given rule */
+SpamFilterHandler.prototype.filterMailboxInLoops = function(boxRule, mailbox) {
+	// try multiple times to catch all unread messages in INBOX
+	for (var i=0; i<2; i++) {
+		delay(0.5)
+		console.log("more messages left: "+ mailbox.unreadCount())
+		if (mailbox.unreadCount() > 0) {
+			ActivityLog.log("more-messages/"+ boxRule.email +"/box."
+				+ mailbox.name() +"/loop."+ i +": "
+				+ mailbox.unreadCount())
+			if (Progress) Progress.description = boxRule.email +": Mailbox test"
+			this.filterMailbox(boxRule, mailbox)
+		} else break
+	}
+}
+
+/** Applies spam filter operation on custom mailboxes of predefined account */
+SpamFilterHandler.prototype.filterAccountMailboxes = function() {
+	if (!this.account) return
+	
+	this.accountMailboxes = this.account.mailboxes()
+	const self = this, firstMsgBoxName = this.mailbox ? this.mailbox.name() : null
+	this.accountRules.mailboxList.forEach(function(boxRule){
+		if (boxRule.name === firstMsgBoxName) return
+		
+		var mailbox = self.accountMailboxes.find(function(box){
+			return box.name() === boxRule.name
+		})
+		if (!mailbox) return
+		
+		boxRule.email = self.accountRules.email
+		self.filterMailboxInLoops(boxRule, mailbox)
+	})
+}
+
+
 /** log all message tests in separate file for debugging if shouldLogActivity == true */
-var ActivityLog = (function () {
+const ActivityLog = (function () {
 	if (!shouldLogActivity) {
 		// return dummy methods if logging switched off
 		const dummyFnc = function(){}
@@ -218,8 +335,8 @@ var ActivityLog = (function () {
 	
 	/** log given message along with run type of test */
 	var logMessage = function (msg, runType) {
-		log(runType +",ts."+ Date.now() +": "+ msg.dateReceived() +",id."+ msg.id() +","
-			+ msg.sender() +", "+ msg.subject())
+		log(runType +",ts."+ Date.now() +": "+ msg.dateReceived() +",id."+ msg.id()
+			+",box."+ msg.mailbox().name() +","+ msg.sender() +", "+ msg.subject())
 	}
 	
 	/** close file before quit */
@@ -238,7 +355,7 @@ var ActivityLog = (function () {
 })()
 
 /** manages mutex locks accessible to different spamfilter instances (osascript processes) */
-var RunCoordinator = (function () {
+const RunCoordinator = (function () {
 	const dir = mail.pathTo("library folder", {from: "user domain", folderCreation: false}
 		).toString() + "/Application Scripts/com.apple.mail/"
 	var path = '', mutex = null, gotLock = null
@@ -252,12 +369,13 @@ var RunCoordinator = (function () {
 	RunCoordinator.prototype.tryLock = function () {
 		mutex = $.NSDistributedLock.lockWithPath(path)
 
-		// force unlock if older than 600 sec as normal unlocking seemed to fail
+		// force unlock if older than mutexLifetime (600) sec as normal unlocking seemed to fail
 		if (!mutex.lockDate.isNil()) {
 			// Foundation.fw bug: lockDate set to reference date (docs say nil) if no lock present
 			var nowIntvl = Math.abs(ObjC.unwrap(mutex.lockDate.timeIntervalSinceNow)),
 				refIntvl = ObjC.unwrap(mutex.lockDate.timeIntervalSinceReferenceDate)
-			if (nowIntvl < refIntvl && nowIntvl > 600) mutex.breakLock
+			if (nowIntvl < refIntvl && nowIntvl > mutexLifetime)
+				mutex.breakLock
 		}
 		
 		try {
@@ -314,11 +432,11 @@ function testSenderForFullName (whitelist, message) {
 
 /** tests for matches between message field and blacklist */
 function testMessageField (field, blacklist, message) {
-	var searchContent = message[field]();
+	const searchContent = message[field]();
 	
 	if (field === "source") {
 		// determine boundary for multipart messages
-		var headers = message.allHeaders()
+		const headers = message.allHeaders()
 		var boundary = ''
 	} else {  // i.e. sender, subject
 		// delete unicode cheat chars
@@ -338,7 +456,7 @@ function testMessageField (field, blacklist, message) {
 
 	// search message body from raw source
 	var initSearchPos = 0
-	var messageComponentsHandler = new MessageComponentsHandler(searchContent, initSearchPos, boundary)
+	const messageComponentsHandler = new MessageComponentsHandler(searchContent, initSearchPos, boundary)
 	while (messageComponentsHandler.hasNextPart()) {
 		// search for blacklist item within current message part
 		var part = messageComponentsHandler.getNextPart();
@@ -410,11 +528,11 @@ function testMessageField (field, blacklist, message) {
 function moveToTrash (mes) {
 	mes.junkMailStatus = true
 	//mes.deletedStatus = true // message lost in the Nirwana
-	var account = mes.mailbox().account()
+	const account = mes.mailbox().account()
 	if (!account) mail.displayDialog("Account of mailbox undefined")
 	
 	// get trash mailbox of account
-	var boxList = account.mailboxes()
+	const boxList = account.mailboxes()
 	if (!boxList || boxList.length === 0) mail.displayDialog("Mailbox list undefined")
 	
 	var trash = boxList.find(function(box){
@@ -442,50 +560,53 @@ function MessagePart (start, end, type, encoding) {
 	this.encoding = encoding.toLowerCase() // content-transfer-encoding of message part
 	this.multiBoundary = ''	// boundary at the very end of the part (multipart/...)
 	this.decoded = null		// decoded message part content if raw data is b64 encoded or html entities might be included
+}
+/** sets end position of message part only if not already set */
+MessagePart.prototype.setEnd = function(e) {
+	if (this.end === 0) this.end = e
+}
 	
-	/** sets end position of message part only if not already set */
-	this.setEnd = function(e){if (this.end === 0) this.end = e}
+/** true, when end position is set */
+MessagePart.prototype.hasEnd = function() {
+	return this.end !== 0
+}
 	
-	/** true, when end position is set */
-	this.hasEnd = function(){return this.end !== 0}
-	
-	/** sets and returns decoded message part content if raw data is b64/qp encoded; normalize umlauts and decode &#ddd; chars in html*/
-	this.decode = function(rawMsg){
-		if (this.decoded !== null) return this.decoded
-			
-		// extract charset from content-type
-		var charset = "", charsetIdx = this.type.indexOf("charset=")
-		if (charsetIdx > 0) {
-			charset = this.type.substr(charsetIdx+8).trim()
-			if (charset[0] === '"')  // omit leading/ trailing quote marks
-				charset = charset.substr(1, charset.length-2).trim()
-		}
+/** sets and returns decoded message part content if raw data is b64/qp encoded; normalize umlauts and decode &#ddd; chars in html*/
+MessagePart.prototype.decode = function(rawMsg) {
+	if (this.decoded !== null) return this.decoded
 		
-		var inputStr = rawMsg.substring(this.start, this.end)  // encoded message part
-		
-		// handle transfer encoding
-		if (this.encoding === "base64") {
-			const firstLine = inputStr.substring(0, 80)
-			if (firstLine && firstLine.indexOf(" ") >= 0) {
-				this.decoded = inputStr
-				console.log("not a real base64 encoding")
-			} else {
-				var wsFreeStr = inputStr.replace(/\s+/g, "")
-				if (wsFreeStr.startsWith("77u/")) // skip binary indicator before decode
-					wsFreeStr = wsFreeStr.substring(4)
-				this.decoded = b64DecodeUnicode(wsFreeStr, charset)
-			}
-		}
-		else if (this.encoding === "quoted-printable") {
-			this.decoded = qpDecodeUnicode(inputStr, charset)
-		}
-		
-		if (this.type.indexOf("html") >= 0) {
-			if (this.decoded == null) this.decoded = inputStr
-			this.decoded = htmlDecodeUnicode(this.decoded)
-		}
-		return this.decoded
+	// extract charset from content-type
+	var charset = "", charsetIdx = this.type.indexOf("charset=")
+	if (charsetIdx > 0) {
+		charset = this.type.substr(charsetIdx+8).trim()
+		if (charset[0] === '"')  // omit leading/ trailing quote marks
+			charset = charset.substr(1, charset.length-2).trim()
 	}
+	
+	var inputStr = rawMsg.substring(this.start, this.end)  // encoded message part
+	
+	// handle transfer encoding
+	if (this.encoding === "base64") {
+		const firstLine = inputStr.substring(0, 80)
+		if (firstLine && firstLine.indexOf(" ") >= 0) {
+			this.decoded = inputStr
+			console.log("not a real base64 encoding")
+		} else {
+			var wsFreeStr = inputStr.replace(/\s+/g, "")
+			if (wsFreeStr.startsWith("77u/")) // skip binary indicator before decode
+				wsFreeStr = wsFreeStr.substring(4)
+			this.decoded = b64DecodeUnicode(wsFreeStr, charset)
+		}
+	}
+	else if (this.encoding === "quoted-printable") {
+		this.decoded = qpDecodeUnicode(inputStr, charset)
+	}
+	
+	if (this.type.indexOf("html") >= 0) {
+		if (this.decoded == null) this.decoded = inputStr
+		this.decoded = htmlDecodeUnicode(this.decoded)
+	}
+	return this.decoded
 }
 
 /** returns content of next specified header as well as start and end position of the header line relative to searchContent */
@@ -495,21 +616,7 @@ function getLocalHeader (headerName, searchContent, startPos) {
 	var headerStartPos = searchContent.substring(startPos)
 		.search(new RegExp("\\n"+ headerName, "i"))
 	if (headerStartPos === -1) return false  // header not found
-	/*const headerNameVersions = ["\n"+ headerName + ":",  // e.g. "\nContent-Type:"
-		"\n"+ headerName[0] + headerName.substring(1).toLowerCase() +":",  // "\nContent-type:"
-		"\n"+ headerName.toLowerCase() +":"  // completely lower-case
-	]
-	var headerStartPos = searchContent.length
-	// find first occurence amongst all header versions
-	for (var i=0; i<headerNameVersions.length; i++) {
-		var pos = searchContent.indexOf(headerNameVersions[i], startPos)
-		if (pos < headerStartPos && pos > -1) {
-			headerStartPos = pos
-			headerName = headerNameVersions[i]
-		}
-	}
-	if (headerStartPos === searchContent.length) return false  // header not found
-	*/
+	
 	// make index from substring() relative to searchContent and skip leading "\n" by +1
 	headerStartPos += startPos + 1
 	
@@ -542,165 +649,160 @@ function MessageComponentsHandler (rawMessage, contentStartPos, boundary) {
 	this.partsList = []
 	this.partIdx = 0  // INTERNAL part index
 	this.isParsed = false
+}
+MessageComponentsHandler.prototype.hasNextPart = function() {
+	return (this.partsList.length > this.partIdx) || !this.isParsed
+}
 	
-	this.hasNextPart = function() {
-		return (this.partsList.length > this.partIdx) || !this.isParsed
-	};
-	
-	this.resetIterator = function() {
-		this.partIdx = 0
-	};
-	
-	this.getNextPart = function() {
-		if (!this.hasNextPart())
-			// index out of bounds
-			return false
+MessageComponentsHandler.prototype.resetIterator = function() {
+	this.partIdx = 0
+}
+MessageComponentsHandler.prototype.getNextPart = function() {
+	if (!this.hasNextPart())
+		// index out of bounds
+		return false
 
-		if (this.isParsed === true)
-			// get message part set during iteration for previous search item
-			return this.partsList[this.partIdx++]
+	if (this.isParsed === true)
+		// get message part set during iteration for previous search item
+		return this.partsList[this.partIdx++]
 
-		// search for further content headers as long as list of parts is incomplete
-		var contentTransEncoding = getLocalHeader("Content-Transfer-Encoding", this.rawMessage, this.searchPos)
-		var contentType = getLocalHeader("Content-Type", this.rawMessage, this.searchPos)
+	// search for further content headers as long as list of parts is incomplete
+	var contentTransEncoding = getLocalHeader("Content-Transfer-Encoding", this.rawMessage, this.searchPos)
+	var contentType = getLocalHeader("Content-Type", this.rawMessage, this.searchPos)
 
-		if ((contentTransEncoding || contentType) == false) {
-			// no more relevant search content left
-			this.isParsed = true
-			this.resetIterator()
-			return false
-		}
-		
-		// define new additional message part
-		if (!contentTransEncoding || !contentType) {
-			var beyondHeadersPos = contentType.lineEndPos
-			var dummy = {headerContent: "", lineStartPos: undefined, lineEndPos: undefined}
-			if (beyondHeadersPos == undefined) {
-				contentType = dummy
-				beyondHeadersPos = contentTransEncoding.lineEndPos
-			}
-			else
-				contentTransEncoding = dummy
-		}
-		else {
-			var minHeader = Math.min(contentType.lineEndPos, contentTransEncoding.lineEndPos)
-			var corruptedHeader = this.rawMessage.indexOf("\n\n", minHeader)
-			if (contentType.lineEndPos > corruptedHeader || contentTransEncoding.lineEndPos > corruptedHeader) {
-				// one of the two headers is missing
-				var beyondHeadersPos = contentType.lineEndPos
-				contentTransEncoding.headerContent = ""  // header for wrong part
-			}
-			else
-				var beyondHeadersPos = Math.max(contentType.lineEndPos, contentTransEncoding.lineEndPos)  // points to first \n after headers
-		}
-		
-		var freeLinePos = this.rawMessage.indexOf("\n\n", beyondHeadersPos)
-		var part = new MessagePart(
-			freeLinePos+2,
-			0,
-			contentType.headerContent,
-			contentTransEncoding.headerContent
-		)
-		
-		var innerBoundary = MessageComponentsHandler.getBoundary(contentType.headerContent)
-		if (innerBoundary !== "") {
-			part.multiBoundary = innerBoundary
-			this.boundaryList.push(innerBoundary)
-			part.start--
-		}
-		
-		var searchable = this.determineSearchableContent(part)
-		if (searchable === -1) {
-			// only, e.g., binary base64 content left
-			this.isParsed = true
-			return false
-		}
-		if (searchable === -2)
-			// parse remaining message content
-			return this.getNextPart()
-		
-		// determine end of part
-		this.determinePartEnd(part)
-				
-		this.partsList.push(part)
-		this.searchPos = part.end + 1  // proceed with next message part
-		this.partIdx++
-		return part
+	if ((contentTransEncoding || contentType) == false) {
+		// no more relevant search content left
+		this.isParsed = true
+		this.resetIterator()
+		return false
 	}
 	
-	this.determineSearchableContent = function(part) {
-		// binary data only searchable by filename and file extensions
-		if (part.type.includes("application/")) {
-			var fileNameStart = part.type.indexOf("name=", 12)
-			var fileNameEnd = part.type.indexOf("\n", fileNameStart+5)
-			if (fileNameEnd < 0) fileNameEnd = part.type.length
-			part.fileName = part.type.substring(fileNameStart, fileNameEnd)
-			return true
-		}
-		
-		// multipart component treated as empty message part
-		if (part.type.includes("multipart/")) {
-			/*var firstChildPos = this.rawMessage.indexOf(part.multiBoundary, part.start);
-			part.setEnd(firstChildPos + part.multiBoundary.length);*/
-			return true
-		}
-		
-		if (part.encoding !== "base64" || part.type.includes("text/")
-			  || part.type.includes("message/"))
-			return true
-		
-		// only accessed once per base64 part, because messagePartsList excludes them
-		if (this.boundaryList.length === 0) {
-			part.setEnd(this.rawMessage.length-1)
-			return -1  // whole message is non-text => can't search
-		}
-		
-		var pos = -1, i = this.boundaryList.length-1
+	// define new additional message part
+	if (!contentTransEncoding || !contentType) {
+		var beyondHeadersPos = contentType.lineEndPos
+		var dummy = {headerContent: "", lineStartPos: undefined, lineEndPos: undefined}
+		if (beyondHeadersPos == undefined) {
+			contentType = dummy
+			beyondHeadersPos = contentTransEncoding.lineEndPos
+		} else
+			contentTransEncoding = dummy
+	} else {
+		var minHeader = Math.min(contentType.lineEndPos, contentTransEncoding.lineEndPos)
+		var corruptedHeader = this.rawMessage.indexOf("\n\n", minHeader)
+		if (contentType.lineEndPos > corruptedHeader || contentTransEncoding.lineEndPos > corruptedHeader) {
+			// one of the two headers is missing
+			var beyondHeadersPos = contentType.lineEndPos
+			contentTransEncoding.headerContent = ""  // header for wrong part
+		} else
+			var beyondHeadersPos = Math.max(contentType.lineEndPos, contentTransEncoding.lineEndPos)  // points to first \n after headers
+	}
+	
+	var freeLinePos = this.rawMessage.indexOf("\n\n", beyondHeadersPos)
+	var part = new MessagePart(
+		freeLinePos+2,
+		0,
+		contentType.headerContent,
+		contentTransEncoding.headerContent
+	)
+	
+	var innerBoundary = MessageComponentsHandler.getBoundary(contentType.headerContent)
+	if (innerBoundary !== "") {
+		part.multiBoundary = innerBoundary
+		this.boundaryList.push(innerBoundary)
+		part.start--
+	}
+	
+	var searchable = this.determineSearchableContent(part)
+	if (searchable === -1) {
+		// only, e.g., binary base64 content left
+		this.isParsed = true
+		return false
+	}
+	if (searchable === -2)
+		// parse remaining message content
+		return this.getNextPart()
+	
+	// determine end of part
+	this.determinePartEnd(part)
+			
+	this.partsList.push(part)
+	this.searchPos = part.end + 1  // proceed with next message part
+	this.partIdx++
+	return part
+}
+	
+MessageComponentsHandler.prototype.determineSearchableContent = function(part) {
+	// binary data only searchable by filename and file extensions
+	if (part.type.includes("application/")) {
+		var fileNameStart = part.type.indexOf("name=", 12)
+		var fileNameEnd = part.type.indexOf("\n", fileNameStart+5)
+		if (fileNameEnd < 0) fileNameEnd = part.type.length
+		part.fileName = part.type.substring(fileNameStart, fileNameEnd)
+		return true
+	}
+	
+	// multipart component treated as empty message part
+	if (part.type.includes("multipart/")) {
+		/*var firstChildPos = this.rawMessage.indexOf(part.multiBoundary, part.start);
+		part.setEnd(firstChildPos + part.multiBoundary.length);*/
+		return true
+	}
+	
+	if (part.encoding !== "base64" || part.type.includes("text/")
+		  || part.type.includes("message/"))
+		return true
+	
+	// only accessed once per base64 part, because messagePartsList excludes them
+	if (this.boundaryList.length === 0) {
+		part.setEnd(this.rawMessage.length-1)
+		return -1  // whole message is non-text => can't search
+	}
+	
+	var pos = -1, i = this.boundaryList.length-1
+	for (i; i>-1; i--) {
+		var pos = this.rawMessage.indexOf(this.boundaryList[i], part.start)
+		if (pos > -1) break
+	}
+	this.searchPos = pos  // skip message part
+	
+	// remove last boundary from list if not used anymore
+	if (i < this.boundaryList.length-1)
+		this.boundaryList.pop()
+	
+	this.searchPos += this.boundaryList[i].length
+	return -2	// don't append to messagePartsList
+}
+	
+MessageComponentsHandler.prototype.determinePartEnd = function(part) {
+	// determine search limit
+	if (this.boundaryList.length === 0) {
+		// message consists of 1 part
+		part.setEnd(this.rawMessage.length-1)
+		return
+	}
+	
+	// determine end position for search within current part
+	if (part.end < 1) {
+		var searchPartEnd = -1, i = this.boundaryList.length-1
 		for (i; i>-1; i--) {
-			var pos = this.rawMessage.indexOf(this.boundaryList[i], part.start)
-			if (pos > -1) break
+			var searchPartEnd = this.rawMessage.indexOf(this.boundaryList[i], part.start)
+			if (searchPartEnd > -1) break
 		}
-		this.searchPos = pos  // skip message part
-		
 		// remove last boundary from list if not used anymore
 		if (i < this.boundaryList.length-1)
 			this.boundaryList.pop()
-		
-		this.searchPos += this.boundaryList[i].length
-		return -2	// don't append to messagePartsList
-	}
+	} else
+		var searchPartEnd = part.end
 	
-	this.determinePartEnd = function(part) {
-		// determine search limit
-		if (this.boundaryList.length === 0) {
-			// message consists of 1 part
-			part.setEnd(this.rawMessage.length-1)
-			return
-		}
+	if (searchPartEnd-- === -1)
+		searchPartEnd = this.rawMessage.length-1  // if missing final boundary
 		
-		// determine end position for search within current part
-		if (part.end < 1) {
-			var searchPartEnd = -1, i = this.boundaryList.length-1
-			for (i; i>-1; i--) {
-				var searchPartEnd = this.rawMessage.indexOf(this.boundaryList[i], part.start)
-				if (searchPartEnd > -1) break
-			}
-			// remove last boundary from list if not used anymore
-			if (i < this.boundaryList.length-1)
-				this.boundaryList.pop()
-		}
-		else
-			var searchPartEnd = part.end
-		
-		if (searchPartEnd-- === -1)
-			searchPartEnd = this.rawMessage.length-1  // if missing final boundary
-			
-		// hardening against inconsistent boundaries
-		var lastNewLinePos = this.rawMessage.lastIndexOf("\n", searchPartEnd)
-		
-		part.setEnd(lastNewLinePos)
-	};
+	// hardening against inconsistent boundaries
+	var lastNewLinePos = this.rawMessage.lastIndexOf("\n", searchPartEnd)
+	
+	part.setEnd(lastNewLinePos)
 }
+
 
 /** extract boundary from given content-type header string if possible*/
 MessageComponentsHandler.getBoundary = function(str){
@@ -863,7 +965,7 @@ function decodeBinaryAsIso88591Str (arr, len = 0) {
 }
 
 // based on base64-js lib at https://github.com/beatgammit/base64-js
-var base64Handler = (function () {
+const base64Handler = (function () {
 	var lookup = []
 	var revLookup = []
 	var Arr = typeof Uint8Array !== 'undefined' ? Uint8Array : Array
@@ -926,7 +1028,7 @@ var base64Handler = (function () {
 })()
 
 // based on https://github.com/ronomon/quoted-printable/blob/master/index.js and https://github.com/mathiasbynens/quoted-printable/blob/master/src/quoted-printable.js
-var QuotedPrintableHandler = (function () {
+const QuotedPrintableHandler = (function () {
 	var Arr = typeof Uint8Array !== 'undefined' ? Uint8Array : Array
 	var decodeTable = (function(){
 		var alphabet = '0123456789ABCDEFabcdef'
