@@ -10,6 +10,10 @@ const mutexLifetime = 600  // duration in seconds after which a mutex lock will 
 const mail = Application.currentApplication()
 mail.includeStandardAdditions = true
 ObjC.import('Foundation')
+//ObjC.import('stdlib')
+ObjC.import('stdio')
+ObjC.import('unistd')
+
 
 /** load blacklist rules */
 const path = mail.pathTo("library folder", {from: "user domain", folderCreation: false}).toString() + "/Application Scripts/com.apple.mail/spamfilter-rules.json"
@@ -59,8 +63,16 @@ const charsetBlacklist = ['windows-1251'/* cyrillic*/, 'gb2312'/*chinese*/, 'gb1
 function performMailActionWithMessages (messages, manualProperties) {
 	mail.downloadHtmlAttachments = false
 	
+	// skip remaining messages if identical to first one due to bug in Mail.app
+	// wrap Mail JXA API
+	var messageList = null
+	if (messages.length > 1 && messages[0].id() !== messages[1].id())
+		messageList = messages.map(function(raw){return new Message(raw)})
+	else
+		messageList = [new Message(messages[0])]
+	
 	const filterHandler = new SpamFilterHandler()
-	filterHandler.filterMessageList(messages)
+	filterHandler.filterMessageList(messageList)
 	
 	// return if no rules exist
 	if (!filterHandler.mailboxRule) {
@@ -72,10 +84,9 @@ function performMailActionWithMessages (messages, manualProperties) {
 	   already in trash or other spamfilter instance running on account
 	*/
 	// try to get lock of current account if more messages are available to filter
-	const accountMutex = new RunCoordinator(filterHandler.mailbox.account().id())
-	if ((messages.length === 1 && filterHandler.mailbox.unreadCount() === 0)
-		  || (messages.length > 1 && messages[0].id() !== messages[1].id())
-		  || ["Deleted Messages", "Trash"].includes(filterHandler.mailbox.name())
+	const accountMutex = new RunCoordinator(filterHandler.mailbox.account.id)
+	if (messageList.length > 1  // user-selected list
+		  || ["Deleted Messages", "Trash"].includes(filterHandler.mailbox.name)
 		  || accountMutex.tryLock() !== true) {
 		if (accountMutex.gotLock() === false)
 			ActivityLog.log("no-lock/"+ filterHandler.mailboxRule.email)
@@ -85,9 +96,13 @@ function performMailActionWithMessages (messages, manualProperties) {
 	if (accountMutex.gotLock() === true)
 		ActivityLog.log("got-lock/"+ filterHandler.mailboxRule.email)
 	
-	// filter messages not dealt with above due to bug in Mail.app
+	// filter messages not dealt with above due to bugs in Mail.app
 	// => filter the whole mailbox of the first message given in messages arg
-	filterHandler.filterCurrentMailbox()
+	mail.checkForNewMail(filterHandler.mailbox.account)
+	delay(1)
+	filterHandler.mailbox.refreshMessageList()
+	if (messages.length > 1 || filterHandler.mailbox.unreadCount > 0)
+		filterHandler.filterCurrentMailbox()
 	
 	// also filter custom mailboxes having some rules defined
 	filterHandler.filterAccountMailboxes()
@@ -114,16 +129,13 @@ SpamFilterHandler.prototype.filterMessageList = function(messageList) {
 		return
 	}
 	
-	for (let message of messageList) {
-		// skip remaining messages if identical to first one due to bug in Mail.app
-		if (this.mailbox && message.id() === messageList[0].id()) break
-	
+	for (var message of messageList) {
 		// search matching rule based on email address
-		const mailbox = message.mailbox()
+		const mailbox = message.mailbox
 		const rule = this.getRuleAndAccountFromMailbox(mailbox)
 	
 		if (!rule) {
-			ActivityLog.log("no-rules/"+ this.account.emailAddresses[0])
+			ActivityLog.log("no-rules/"+ this.account.emailAddressList[0])
 			return
 		}
 		
@@ -145,9 +157,9 @@ SpamFilterHandler.prototype.filterMessageList = function(messageList) {
 	Sets account rule set
 */
 SpamFilterHandler.prototype.getRuleAndAccountFromMailbox = function(mailbox) {
-	this.account = mailbox.account()
-	const boxName = mailbox.name(),
-		accountAddressList = this.account.emailAddresses()
+	this.account = mailbox.account
+	const boxName = mailbox.name,
+		accountAddressList = this.account.emailAddressList
 		
 	// search account specific rules object
 	const accountRules = rulesList.find(function(rule) {
@@ -194,7 +206,7 @@ SpamFilterHandler.prototype.filterMessage = function(rule, message) {
 		delay(0.6)  // avoid DoS of your mail server
 		return true
 	} else {
-		console.log("No blacklist matches found")
+		//console.log("No blacklist matches found")
 		return false
 	}
 }
@@ -206,33 +218,38 @@ SpamFilterHandler.prototype.moveToTrash = function(mes) {
 	if (!this.account) mail.displayDialog("Account of mailbox undefined")
 	
 	// get trash mailbox of account
-	const boxList = this.accountMailboxes || (this.accountMailboxes = this.account.mailboxes())
+	const boxList = this.accountMailboxes || (this.accountMailboxes = this.account.mailboxList)
 	if (!boxList || boxList.length === 0) mail.displayDialog("Mailbox list undefined")
 	
 	var trash = boxList.find(function(box){
-		var boxName = box.name()
-		var exists = boxName.includes("Deleted Messages")
+		const boxName = box.name, exists = boxName.includes("Deleted Messages")
 		return exists || boxName.includes("Trash")
 	});
 	if (!trash) {
-		mail.displayDialog("Trash undefined for account " + this.account.name())
+		mail.displayDialog("Trash undefined for account " + this.account.name)
 		return
 	}
 
-	mes.mailbox = trash()
+	mes.moveToMailbox(trash)
 	//mail.checkForNewMail(account)
 }
 
 
 /** Applies spam filter operation once on given mailbox using given rule */
 SpamFilterHandler.prototype.filterMailbox = function(boxRule, mailbox) {
-	// chronological join of 'Deleted Messages' since startup and 'INBOX' 
-	var mailboxMessages = mailbox.messages(), msgIdx = 0,
-		unreadCount = mailbox.unreadCount() || messages.length
+	// message list: chronological join of 'Deleted Messages' since startup and 'INBOX' 
+	var  msgIdx = 0, unreadCount = mailbox.unreadCount, initMessageCount = mailbox.messageCount
 	
-	while (msgIdx < unreadCount && msgIdx < mailboxMessages.length) {
-		const message = mailboxMessages[msgIdx], readStatus = message.readStatus(),
-			junkStatus = message.junkMailStatus()
+	while (msgIdx < unreadCount && msgIdx < mailbox.messageCount
+	  && mailbox.messageCount == initMessageCount) {
+		const message = mailbox.getMessageByIndex(msgIdx),
+			readStatus = message.readStatus
+		if (readStatus === null) {
+			ActivityLog.log("readStatus = null")
+			mailbox.refreshMessageList()
+			return false
+		}
+		const junkStatus = message.junkMailStatus
 			
 		ActivityLog.logMessage(message, "secrun-test/"+ boxRule.email +"/idx."
 			+ msgIdx)
@@ -243,11 +260,22 @@ SpamFilterHandler.prototype.filterMailbox = function(boxRule, mailbox) {
 		// test message (again)
 		if (!readStatus) {
 			this.filterMessage(boxRule, message)
-			if (mailbox.unreadCount() === 0) break
+			if (mailbox.unreadCount === 0) break
 		}
 		
 		msgIdx++
+		
+		// watchdog for Mail.app bugs, e.g., new message not yet in messages list of mailbox
+		// causing big useless message loop
+		if (msgIdx % 10 == 0) {
+			if (Date.now() - Date.parse(message.getField('dateReceived')) > 86400000*30) {
+				ActivityLog.log("stop filtering: messages older than 30 days")
+				break
+			}
+			mailbox.refreshMessageList()
+		}
 	}
+	return true
 }
 
 /** Applies spam filter operation on predefined mailbox, e.g., by filterMessageList().
@@ -256,37 +284,38 @@ SpamFilterHandler.prototype.filterMailbox = function(boxRule, mailbox) {
 SpamFilterHandler.prototype.filterCurrentMailbox = function() {
 	if (!this.mailbox || !this.account) return
 	
-	this.accountMailboxes = this.account.mailboxes()
+	this.accountMailboxes = this.account.mailboxList
 	this.filterMailboxInLoops(this.mailboxRule, this.mailbox)
 }
 
 /** Applies multiple iterations of spam filter operation on given mailbox using given rule */
 SpamFilterHandler.prototype.filterMailboxInLoops = function(boxRule, mailbox) {
 	// try multiple times to catch all unread messages in INBOX
-	for (var i=0; i<2; i++) {
+	var iterations = 2
+	for (var i=0; i<iterations; i++) {
 		delay(0.5)
-		console.log("more messages left: "+ mailbox.unreadCount())
-		if (mailbox.unreadCount() > 0) {
+		var unreadCount = mailbox.unreadCount
+		//console.log("more messages left: "+ unreadCount)
+		if (unreadCount > 0) {
 			ActivityLog.log("more-messages/"+ boxRule.email +"/box."
-				+ mailbox.name() +"/loop."+ i +": "
-				+ mailbox.unreadCount())
+				+ mailbox.name +"/loop."+ i +": " + unreadCount)
 			if (Progress) Progress.description = boxRule.email +": Mailbox test"
-			this.filterMailbox(boxRule, mailbox)
+			if (!this.filterMailbox(boxRule, mailbox) && iterations == 2) iterations = 3
 		} else break
 	}
 }
 
 /** Applies spam filter operation on custom mailboxes of predefined account */
 SpamFilterHandler.prototype.filterAccountMailboxes = function() {
-	if (!this.account) return
+	if (!this.account || !this.accountRules.mailboxList) return
 	
-	this.accountMailboxes = this.account.mailboxes()
-	const self = this, firstMsgBoxName = this.mailbox ? this.mailbox.name() : null
+	this.accountMailboxes = this.account.mailboxList
+	const self = this, firstMsgBoxName = this.mailbox ? this.mailbox.name : null
 	this.accountRules.mailboxList.forEach(function(boxRule){
 		if (boxRule.name === firstMsgBoxName) return
 		
 		var mailbox = self.accountMailboxes.find(function(box){
-			return box.name() === boxRule.name
+			return box.name === boxRule.name
 		})
 		if (!mailbox) return
 		
@@ -319,6 +348,15 @@ const ActivityLog = (function () {
 		console.log("couldn't get file handle for logging")
 		return
 	}
+	fh.seekToEndOfFile
+	
+	try {
+		const stderrFd = $.NSFileHandle.fileHandleWithStandardError.fileDescriptor
+		//$.freopen(path.UTF8String, ObjC.wrap("a+").UTF8String, stderrFd)
+		$.dup2(fh.fileDescriptor, stderrFd)
+	} catch (e) {
+		console.log(e.message)
+	}
 	
 	/** general log function appending entry as a line to file */
 	var log = function (str) {
@@ -335,8 +373,9 @@ const ActivityLog = (function () {
 	
 	/** log given message along with run type of test */
 	var logMessage = function (msg, runType) {
-		log(runType +",ts."+ Date.now() +": "+ msg.dateReceived() +",id."+ msg.id()
-			+",box."+ msg.mailbox().name() +","+ msg.sender() +", "+ msg.subject())
+		log(runType +",ts."+ Date.now() +": "+ msg.getField('dateReceived')
+		  +",id."+ msg.id +",box."+ msg.mailbox.name +","+ 
+		  msg.getField('sender') +", "+ msg.getField('subject'))
 	}
 	
 	/** close file before quit */
@@ -407,10 +446,10 @@ function alertMatchDetails (field, item) {
 
 /** returns spam match (true) if self addressed email (sender === receiver address) doesn't include account owner's full name */
 function testSelfAddressedForFullName (accountEmail, message) {
-	var from = message.sender()
+	var from = message.getField('sender')
 	if (from == "") return true  // no sender provided
 	if (from.includes(accountEmail)) {
-		const res = !from.includes(message.mailbox().account().fullName())
+		const res = !from.includes(message.mailbox.account.fullName)
 		if (res) alertMatchDetails('Sender == receiver test', 'Self addressed without full name')
 		return res
 	}
@@ -420,7 +459,7 @@ function testSelfAddressedForFullName (accountEmail, message) {
 /** returns spam match (true) if sender's name consists of only one word not included in whitelist and whitelist.shouldTest == true */
 function testSenderForFullName (whitelist, message) {
 	if (!whitelist.shouldTest) return false
-	const from = message.sender()
+	const from = message.getField('sender')
 	const addressIdx = from.indexOf("<")  // e.g. X Y <xy@abc.com>
 	if (addressIdx <= 0) return false
 	const name = from.substring(0, addressIdx).trim().replace(/"/g, '')
@@ -432,11 +471,11 @@ function testSenderForFullName (whitelist, message) {
 
 /** tests for matches between message field and blacklist */
 function testMessageField (field, blacklist, message) {
-	const searchContent = message[field]();
+	const searchContent = message.getField(field)
 	
 	if (field === "source") {
 		// determine boundary for multipart messages
-		const headers = message.allHeaders()
+		//const headers = message.allHeaders()
 		var boundary = ''
 	} else {  // i.e. sender, subject
 		// delete unicode cheat chars
@@ -503,10 +542,10 @@ function testMessageField (field, blacklist, message) {
 		
 		// check for cheating zero-width spaces once per message part
 		if (messageComponentsHandler.isParsed === false && cheatChars.some(function(c) {
-			  const res = searchPart.indexOf(c, 1) > 0
+			  const idx = searchPart.indexOf(c, 1), res = idx > 0
 			  if (res) {
 			  	const unicode = 'U+'+ c.codePointAt(0).toString(16).toUpperCase()
-				alertMatchDetails('Cheat char', unicode)
+				alertMatchDetails('Cheat char at idx '+ idx, unicode)
 			  }
 			  return res
 			})
@@ -523,32 +562,6 @@ function testMessageField (field, blacklist, message) {
 	}
 	return false  // no matches in blacklist
 }
-
-/** moves specified message to trash folder of its mail account */
-function moveToTrash (mes) {
-	mes.junkMailStatus = true
-	//mes.deletedStatus = true // message lost in the Nirwana
-	const account = mes.mailbox().account()
-	if (!account) mail.displayDialog("Account of mailbox undefined")
-	
-	// get trash mailbox of account
-	const boxList = account.mailboxes()
-	if (!boxList || boxList.length === 0) mail.displayDialog("Mailbox list undefined")
-	
-	var trash = boxList.find(function(box){
-		var boxName = box.name()
-		var exists = boxName.includes("Deleted Messages")
-		return exists || boxName.includes("Trash")
-	});
-	if (!trash) {
-		mail.displayDialog("Trash undefined for account " + account.name())
-		return
-	}
-
-	mes.mailbox = trash()
-	//mail.checkForNewMail(account)
-}
-
 
 // helper functions
 /** includes all properties and actions required for message part handling */
@@ -821,8 +834,10 @@ MessageComponentsHandler.getBoundary = function(str){
 /** html special entities decoding function */
 function htmlDecodeUnicode (rawStr, charset = "") {
 	var idx = 0, res = ''
-	var htmlEntities = {"&auml;":"ä", "&Auml;":"Ä", "&ouml;":"ö", "&Öuml;":"Ö", "&uuml;":"ü", "&Uuml;":"Ü", "&szlig;":"ß", "&zwnj;":"", "<\/?[Ss][^>]*>":"", "<\/?(?:font|FONT)[^>]*>":"", "&#x200[cC];":"" /*,"&#228;":"ä", "&#196;":"Ä", "&#246;":"ö", "&#214;":"Ö", "&#252;":"ü", "&#220;":"Ü", "&#223;":"ß", "&#8364;":"€"*/}
-	var customRplc = {"8204":""}  // decimal code points of, e.g., &#8204;
+	var htmlEntities = {"&auml;":"ä", "&Auml;":"Ä", "&ouml;":"ö", "&Öuml;":"Ö", "&uuml;":"ü", "&Uuml;":"Ü", "&szlig;":"ß", "&zwnj;":"", "<\/?[Ss][^>]*>":"", "<\/?(?:font|FONT)[^>]*>":"" /*, "&#x200[cC];":"","&#228;":"ä", "&#196;":"Ä", "&#246;":"ö", "&#214;":"Ö", "&#252;":"ü", "&#220;":"Ü", "&#223;":"ß", "&#8364;":"€"*/}
+	// code points of, e.g., &#8204;
+	var customCodePointRplc = {"8204":"", "65279":"", "x200c":"", "x200C":""}
+	
 	var regexMap = {}
 	for (var str in htmlEntities) {
 		regexMap[str] = new RegExp(str, "g")
@@ -861,8 +876,8 @@ function htmlDecodeUnicode (rawStr, charset = "") {
 			if (delimiter === ';' && rawStr[idx+1] === '#') {
 				// decode all special decimal entities to unicode chars
 				entity = rawStr.substr(idx+2, delimiterOffset-2)
-				if (customRplc[entity] !== undefined)
-					entity = customRplc[entity]
+				if (customCodePointRplc[entity] !== undefined)
+					entity = customCodePointRplc[entity]
 				else
 					entity = String.fromCodePoint(entity | 0)
 			}
@@ -1105,3 +1120,92 @@ const QuotedPrintableHandler = (function () {
 		return {arr: res, length: resIdx+1}}
 	}
 })()
+
+
+// Mail JXA API wrappers
+function Message(raw) {
+	this._raw = raw
+	this._id = null
+	this._mailbox = null
+}
+Object.defineProperties(Message.prototype, {
+	'id': {get: function(){return this._id || (this._id = this._raw.id()) }},
+	'mailbox': {get: function(){
+  		return this._mailbox || (this._mailbox = new Mailbox(this._raw.mailbox())) }},
+	'junkMailStatus': {get: function(){return this._raw.junkMailStatus()},
+  	  set: function(status){this._raw.junkMailStatus = status }},
+	'readStatus': {get: function(){
+		if (this._raw && this._raw.readStatus) {
+		  try {
+			return this._raw.readStatus()
+		  } catch (e) {
+		  	console.log('readStatus exception: ['+ e.name +'] '+ e.message)
+			return null
+		  }
+	    } else {
+			console.log('raw message object not found')
+			return null
+		}
+	}}
+})
+Message.prototype.moveToMailbox = function(box){
+	this._raw.mailbox = box._raw()
+	this._mailbox = new Mailbox(box._raw)
+}
+Message.prototype.getField = function(key){
+	if (!this[key]) this[key] = this._raw[key]()
+	return this[key]
+}
+
+function Mailbox(raw) {
+	this._raw = raw
+	this._name = null
+	this._account = null
+	this._messageList = null  // big array
+	this._messages = null  // raw objects
+	this.lazyMessageList = null
+}
+Object.defineProperties(Mailbox.prototype, {
+	'name': {get: function(){return this._name || (this._name = this._raw.name()) }},
+	'account': {get: function(){
+		return this._account || (this._account = new Account(this._raw.account())) }},
+	'unreadCount': {get: function(){return this._raw.unreadCount() }},
+	'messageList': {get: function(){  // possibly very big array
+		return this._messageList || (this._messageList = this._raw.messages()
+		  .map(function(raw){return new Message(raw)})) }},
+	'messageCount': {get: function(){
+		if (!this._messages) this._messages = this._raw.messages()
+		return this._messages.length }}
+})
+Mailbox.prototype.getMessageByIndex = function(idx){
+	if (!this._messages) this._messages = this._raw.messages()
+	if (!this.lazyMessageList) this.lazyMessageList = []
+	if (!this.lazyMessageList[idx])
+		this.lazyMessageList[idx] = new Message(this._messages[idx])
+	return this.lazyMessageList[idx]
+}
+Mailbox.prototype.refreshMessageList = function(){
+	this._messages = this._raw.messages()
+	this._messageList = null
+	this.lazyMessageList = null
+}
+
+function Account(raw) {
+	this._raw = raw
+	this._id = null
+	this._name = null
+	this._fullName = null
+	this._emailAddresses = null
+	this._mailboxes = null
+}
+Object.defineProperties(Account.prototype, {
+	'id': {get: function(){return this._id || (this._id = this._raw.id()) }},
+	'name': {get: function(){return this._name || (this._name = this._raw.name()) }},
+	'fullName': {get: function(){
+		return this._fullName || (this._fullName = this._raw.fullName()) }},
+	'emailAddressList': {get: function(){
+		return this._emailAddresses || (this._emailAddresses = this._raw.emailAddresses()) }},
+	'mailboxList': {get: function(){
+		return this._mailboxes || (this._mailboxes = this._raw.mailboxes()
+		  .map(function(raw){return new Mailbox(raw)})) }}
+})
