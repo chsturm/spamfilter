@@ -56,6 +56,15 @@ The `rulesList` property contains the array of mail accounts for which you want 
 
 All comparisons with list items are case-sensitive.
 
+## Deinstallation
+Unload launch agent in terminal:
+`launchctl unload -w ~/Library/LaunchAgents/com.github.chsturm.spamfilter.plist`
+
+Remove the following files:
+- `~/Library/Application Scripts/com.apple.mail/spamfilter.scpt`
+- `~/Library/Application Scripts/com.apple.mail/spamfilter-rules.json`
+- `~/Library/LaunchAgents/com.github.chsturm.spamfilter.plist`
+
 ## Further notes
 ### Automatic filtering
 In addition to your own rules there are some more tests that are always performed and lead to spam matches:
