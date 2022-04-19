@@ -1,3 +1,22 @@
+/*
+spamfilter for Apple Mail.app
+Copyright (c) 2022 Christian Sturm
+
+This program is free software: you can redistribute it and/or modify
+it under the terms of the GNU General Public License as published by
+the Free Software Foundation, either version 3 of the License, or
+(at your option) any later version.
+
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+GNU General Public License for more details.
+
+You should have received a copy of the GNU General Public License
+along with this program.  If not, see <https://www.gnu.org/licenses/>.
+*/
+
+
 'use strict';
 
 // start web inspector panel
@@ -7,8 +26,14 @@ var shouldAlertMatchDetails = false  // true: alert rule item if a rule match is
 const shouldLogActivity = false  // true: log details about message tests to file
 const mutexLifetime = 600  // duration in seconds after which a mutex lock will be reset
 
-const mail = Application.currentApplication()
+const mail = Application.currentApplication().name == "Mail"
+	? Application.currentApplication() : Application("Mail")
+if (!mail.running()) {
+	delay(10)
+	if (!mail.running()) throw "Mail.app not running"
+}
 mail.includeStandardAdditions = true
+
 ObjC.import('Foundation')
 //ObjC.import('stdlib')
 ObjC.import('stdio')
@@ -58,6 +83,39 @@ const fileExtensions = ['.7z', '.exe', '.jpg.zip']
 
 /** uncommon charsets (in lowercase) */
 const charsetBlacklist = ['windows-1251'/* cyrillic*/, 'gb2312'/*chinese*/, 'gb18030'/*chinese*/]
+
+
+/** handler called by terminal via osascript -l JavaScript <path> */
+function run () {
+	mail.downloadHtmlAttachments = false
+	const accountList = mail.accounts()
+	var shouldDisplayNotification = false
+	
+	accountList.forEach(function(account){
+		if (account.enabled() === false) return
+		
+		const filterHandler = new SpamFilterHandler()
+		filterHandler.account = new Account(account)
+		if (!filterHandler.loadAccountRules()) {
+			//ActivityLog.log("no-rules/"+ filterHandler.account.emailAddressList[0] +" (CLI invoked)")
+			return
+		}
+		
+		const accountMutex = new RunCoordinator(filterHandler.account.id)
+		if (accountMutex.tryLock() !== true) {
+			ActivityLog.log("CLI:no-lock/"+ filterHandler.accountRules.email)
+			return
+		}
+		//ActivityLog.log("got-lock/"+ filterHandler.accountRules.email +" (CLI invoked)")
+		
+		filterHandler.invokedBy = 'CLI:';
+		filterHandler.filterAccountMailboxes()
+		shouldDisplayNotification |= filterHandler.hasNewMessages
+		accountMutex.unlock()
+	})
+	ActivityLog.finish()
+	if (shouldDisplayNotification) newMailNotification()
+}
 
 /** handler called by Apple Mail when applying rules on messages */
 function performMailActionWithMessages (messages, manualProperties) {
@@ -109,6 +167,19 @@ function performMailActionWithMessages (messages, manualProperties) {
 	
 	accountMutex.unlock()
 	ActivityLog.finish()
+	if (filterHandler.hasNewMessages) newMailNotification()
+}
+
+/** Display notification for new messages in mailboxes other than INBOX */
+function newMailNotification(retryOnError = true) {
+	const app = Application.currentApplication()  // displayNotification only works in currApp
+	app.includeStandardAdditions = true
+	try {
+		app.displayNotification('New messages in Mail.app', {withTitle: "Spamfilter"})
+	} catch (err) {
+		console.log("Notification error: "+ err.message)
+		if (retryOnError) newMailNotification(false)
+	}
 }
 
 /** Handles all spam filter operations on single messages, message lists, mailboxes and accounts
@@ -119,6 +190,8 @@ function SpamFilterHandler () {
 	this.accountRules = null
 	this.account = null
 	this.accountMailboxes = null
+	this.invokedBy = ''
+	this.hasNewMessages = false
 }
 /** Applies spam filter operation on given message list;
 	Defines mailbox, rules and account properties for subsequent filtering
@@ -153,12 +226,45 @@ SpamFilterHandler.prototype.filterMessageList = function(messageList) {
 	}
 }
 
+SpamFilterHandler.prototype.loadAccountRules = function() {
+	if (!this.account) {
+		ActivityLog.log("loadAccountRules() failed: this.account not defined");
+		return false
+	}
+	const accountAddressList = this.account.emailAddressList
+	
+	// search account specific rules object
+	const accountRules = rulesList.find(function(rule) {
+		return accountAddressList.some(function(address){
+			return address === rule.email
+		})
+	})
+	if (!accountRules) return false
+	this.accountRules = accountRules
+	
+	// add default INBOX rule to mailboxList if not already included
+	if (!accountRules.mailboxList) accountRules.mailboxList = []
+	if (accountRules.mailboxList.some(function(rule){
+		return rule.name === 'INBOX'
+	})) return true
+	
+	accountRules.mailboxList.push({
+		name: 'INBOX',
+		email: accountRules.email,
+		fromWhitelist: accountRules.fromWhitelist,
+		senderBlacklist: accountRules.senderBlacklist,
+		subjectBlacklist: accountRules.subjectBlacklist,
+		contentBlacklist: accountRules.contentBlacklist
+	})
+	return true
+}
+
 /** Returns the correct rule in json rules file for given mailbox;
 	Sets account rule set
 */
 SpamFilterHandler.prototype.getRuleAndAccountFromMailbox = function(mailbox) {
 	this.account = mailbox.account
-	const boxName = mailbox.name,
+	const boxName = mailbox.name/*,
 		accountAddressList = this.account.emailAddressList
 		
 	// search account specific rules object
@@ -167,26 +273,27 @@ SpamFilterHandler.prototype.getRuleAndAccountFromMailbox = function(mailbox) {
 			return address === rule.email
 		})
 	})
-	if (!accountRules) return null
+	if (!accountRules) return null*/
+	if (!this.loadAccountRules()) return null;
 	
 	// choose either the default rule for INBOX or one for cutom mailboxes
 	let rule = null
-	if (boxName.includes('INBOX')) {
-		rule = {email: accountRules.email,
-			fromWhitelist: accountRules.fromWhitelist,
-			senderBlacklist: accountRules.senderBlacklist,
-			subjectBlacklist: accountRules.subjectBlacklist,
-			contentBlacklist: accountRules.contentBlacklist
+	/*if (boxName.includes('INBOX')) {
+		rule = {email: this.accountRules.email,
+			fromWhitelist: this.accountRules.fromWhitelist,
+			senderBlacklist: this.accountRules.senderBlacklist,
+			subjectBlacklist: this.accountRules.subjectBlacklist,
+			contentBlacklist: this.accountRules.contentBlacklist
 		}
-	} else if (Array.isArray(accountRules.mailboxList)
-		  && accountRules.mailboxList.length > 0) {
-		rule = accountRules.mailboxList.find(function(rule){
+	} else*/ if (Array.isArray(this.accountRules.mailboxList)
+		  && this.accountRules.mailboxList.length > 0) {
+		rule = this.accountRules.mailboxList.find(function(rule){
 			return boxName === rule.name
 		})
-		if (rule) rule.email = accountRules.email
+		if (rule) rule.email = this.accountRules.email
 	}
 	
-	this.accountRules = accountRules
+	//this.accountRules = accountRules
 	return rule
 }
 
@@ -251,7 +358,7 @@ SpamFilterHandler.prototype.filterMailbox = function(boxRule, mailbox) {
 		}
 		const junkStatus = message.junkMailStatus
 			
-		ActivityLog.logMessage(message, "secrun-test/"+ boxRule.email +"/idx."
+		ActivityLog.logMessage(message, this.invokedBy +"secrun-test/"+ boxRule.email +"/idx."
 			+ msgIdx)
 		
 		// don't count already tested spam messages or read messages
@@ -267,9 +374,9 @@ SpamFilterHandler.prototype.filterMailbox = function(boxRule, mailbox) {
 		
 		// watchdog for Mail.app bugs, e.g., new message not yet in messages list of mailbox
 		// causing big useless message loop
-		if (msgIdx % 10 == 0) {
-			if (Date.now() - Date.parse(message.getField('dateReceived')) > 86400000*30) {
-				ActivityLog.log("stop filtering: messages older than 30 days")
+		if (msgIdx % 5 == 0) {
+			if (Date.now() - Date.parse(message.getField('dateReceived')) > 86400000*20) {
+				ActivityLog.log("stop filtering: messages older than 20 days")
 				break
 			}
 			mailbox.refreshMessageList()
@@ -295,14 +402,17 @@ SpamFilterHandler.prototype.filterMailboxInLoops = function(boxRule, mailbox) {
 	for (var i=0; i<iterations; i++) {
 		delay(0.5)
 		var unreadCount = mailbox.unreadCount
-		//console.log("more messages left: "+ unreadCount)
 		if (unreadCount > 0) {
-			ActivityLog.log("more-messages/"+ boxRule.email +"/box."
+			ActivityLog.log(this.invokedBy +"more-messages/"+ boxRule.email +"/box."
 				+ mailbox.name +"/loop."+ i +": " + unreadCount)
 			if (Progress) Progress.description = boxRule.email +": Mailbox test"
 			if (!this.filterMailbox(boxRule, mailbox) && iterations == 2) iterations = 3
 		} else break
 	}
+	
+	// display notification if new messages in secondary mailboxes
+	if (mailbox.name == 'INBOX') return
+	if (mailbox.unreadCount > 0) this.hasNewMessages = true
 }
 
 /** Applies spam filter operation on custom mailboxes of predefined account */
