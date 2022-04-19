@@ -58,6 +58,7 @@ All comparisons with list items are case-sensitive.
 
 ## Deinstallation
 Unload launch agent in terminal:
+
 `launchctl unload -w ~/Library/LaunchAgents/com.github.chsturm.spamfilter.plist`
 
 Remove the following files:
