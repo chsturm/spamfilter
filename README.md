@@ -4,7 +4,7 @@ Spam messages are marked as Junk and moved to the trash folder.
 
 ## Installation
 There are two invokation modes for the spamfilter script that impose different installation tasks. The first mode relies on Mail.app's rule infrastructure to automate handling of new incoming messages dedicated to default inboxes:
-1. Download `spamfilter.zip`from [Releases](https://github.com/chsturm/spamfilter/releases)
+1. Download `spamfilter.zip` from [Releases](https://github.com/chsturm/spamfilter/releases)
 2. Extract zip archive, open Terminal and change working directory to spamfilter directory via `cd path/to/spamfilter`
 3. Run `sh install.sh`
 4. Open Mail.app's preferences pane and go to "Rules"

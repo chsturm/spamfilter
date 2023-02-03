@@ -6,7 +6,7 @@ This spamfilter lets you easily define keyword-based filter rules for each of yo
 INSTALLATION
 There are two invokation modes for the spamfilter script that impose different installation tasks. The first mode relies on Mail.app's rule infrastructure to automate handling of new incoming messages dedicated to default inboxes:
 
-1. Download spamfilter.zipfrom Releases
+1. Download spamfilter.zip from Releases
 2. Extract zip archive, open Terminal and change working directory to spamfilter directory via 'cd path/to/spamfilter_dir'
 3. Run 'sh install.sh'
 4. Open Mail.app's preferences pane and go to "Rules"
