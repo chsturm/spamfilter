@@ -1,6 +1,6 @@
 /*
 spamfilter for Apple Mail.app
-Copyright (c) 2022 Christian Sturm
+Copyright (c) 2023 Christian Sturm
 
 This program is free software: you can redistribute it and/or modify
 it under the terms of the GNU General Public License as published by
@@ -26,50 +26,22 @@ var shouldAlertMatchDetails = false  // true: alert rule item if a rule match is
 const shouldLogActivity = false  // true: log details about message tests to file
 const mutexLifetime = 600  // duration in seconds after which a mutex lock will be reset
 
+
 const mail = Application.currentApplication().name == "Mail"
 	? Application.currentApplication() : Application("Mail")
+mail.includeStandardAdditions = true
 if (!mail.running()) {
 	delay(10)
 	if (!mail.running()) throw "Mail.app not running"
 }
-mail.includeStandardAdditions = true
+
 
 ObjC.import('Foundation')
 //ObjC.import('stdlib')
 ObjC.import('stdio')
 ObjC.import('unistd')
 
-
-/** load blacklist rules */
-const path = mail.pathTo("library folder", {from: "user domain", folderCreation: false}).toString() + "/Application Scripts/com.apple.mail/spamfilter-rules.json"
-const rulesList = loadRules(path)
-
-function loadRules (path) {
-	try {
-		var fm = $.NSFileManager.defaultManager
-		if (!fm.fileExistsAtPath(path)) {
-			mail.displayDialog("No rules file found!", {withIcon: "caution", givingUpAfter: 10})
-		}
-		var contents = fm.contentsAtPath(path) // NSData
-		contents = $.NSString.alloc.initWithDataEncoding(contents, $.NSUTF8StringEncoding);
-		var configJsonStr = ObjC.unwrap(contents)
-	
-		if (configJsonStr != "")
-			var config = JSON.parse(configJsonStr)
-		else
-			console.log("No rules found!")
-	} catch (e) {
-		console.log(e.name +': '+ e.message)
-		if (e instanceof SyntaxError && !config)
-			mail.displayDialog("JSON syntax error in rules file on line "+ e.lineNumber +": "
-				+ e.message)
-	}
-	
-	if (!config || !config.rulesList) return []
-	if (config.shouldAlertMatchDetails === true || config.shouldAlertMatchDetails !== "false")
-		shouldAlertMatchDetails = config.shouldAlertMatchDetails
-	return config.rulesList
-}
+var rulesHandler = new RulesHandler()
 
 
 /** These chars are usually not used within normal text,
@@ -85,11 +57,68 @@ const fileExtensions = ['.7z', '.exe', '.jpg.zip']
 const charsetBlacklist = ['windows-1251'/* cyrillic*/, 'gb2312'/*chinese*/, 'gb18030'/*chinese*/]
 
 
+/** Construct blacklist rules handler */
+function RulesHandler(path = null) {
+	this.rulesList = null
+	if (path)
+		this.path = path
+	else {
+		this.path = mail.pathTo("library folder", {from: "user domain", folderCreation: false}).toString() + "/Application Scripts/com.apple.mail/spamfilter-rules.json"
+	}
+}
+
+/** Load json object from rules file */
+RulesHandler.prototype.loadConfigFromFile = function() {
+	var config = null,
+		fm = $.NSFileManager.defaultManager
+	if (!fm.fileExistsAtPath(this.path)) {
+		mail.displayDialog("No rules file found!", {withIcon: "caution", givingUpAfter: 10})
+		return config
+	}
+	var contents = fm.contentsAtPath(this.path) // NSData
+	contents = $.NSString.alloc.initWithDataEncoding(contents, $.NSUTF8StringEncoding);
+	var configJsonStr = ObjC.unwrap(contents)
+	
+	if (configJsonStr != "")
+		config = JSON.parse(configJsonStr)
+	else
+		console.log("No rules in file!")
+	return config
+}
+
+/** Setup rules and configuration from json object */
+RulesHandler.prototype.loadRulesList = function() {
+	try {
+		var config = this.loadConfigFromFile()
+	} catch (e) {
+		console.log(e.name +': '+ e.message)
+		if (e instanceof SyntaxError && !config)
+			mail.displayDialog("JSON syntax error in rules file on line "+ e.lineNumber +": "
+				+ e.message)
+	}
+	
+	if (!config || !config.rulesList) return false
+	
+	if (config.shouldAlertMatchDetails === true || config.shouldAlertMatchDetails !== "false")
+		shouldAlertMatchDetails = config.shouldAlertMatchDetails
+	this.rulesList = config.rulesList
+	return true
+}
+
+/** Get rules for given email address resp. account */
+RulesHandler.prototype.getRulesForAddress = function(address) {
+	return this.rulesList.find(function(rule) {
+		return address === rule.email
+	})
+}
+
+
 /** handler called by terminal via osascript -l JavaScript <path> */
 function run () {
 	mail.downloadHtmlAttachments = false
 	const accountList = mail.accounts()
 	var shouldDisplayNotification = false
+	if (!rulesHandler.loadRulesList()) return
 	
 	accountList.forEach(function(account){
 		if (account.enabled() === false) return
@@ -120,6 +149,7 @@ function run () {
 /** handler called by Apple Mail when applying rules on messages */
 function performMailActionWithMessages (messages, manualProperties) {
 	mail.downloadHtmlAttachments = false
+	if (!rulesHandler.loadRulesList()) return
 	
 	// skip remaining messages if identical to first one due to bug in Mail.app
 	// wrap Mail JXA API
@@ -197,7 +227,7 @@ function SpamFilterHandler () {
 	Defines mailbox, rules and account properties for subsequent filtering
 */
 SpamFilterHandler.prototype.filterMessageList = function(messageList) {
-	if (!Array.isArray(rulesList)) {
+	if (!Array.isArray(rulesHandler.rulesList)) {
 		mail.displayDialog("No rules list found in json file")
 		return
 	}
@@ -226,6 +256,7 @@ SpamFilterHandler.prototype.filterMessageList = function(messageList) {
 	}
 }
 
+/** Get account rules from general rules list */
 SpamFilterHandler.prototype.loadAccountRules = function() {
 	if (!this.account) {
 		ActivityLog.log("loadAccountRules() failed: this.account not defined");
@@ -234,11 +265,10 @@ SpamFilterHandler.prototype.loadAccountRules = function() {
 	const accountAddressList = this.account.emailAddressList
 	
 	// search account specific rules object
-	const accountRules = rulesList.find(function(rule) {
-		return accountAddressList.some(function(address){
-			return address === rule.email
-		})
-	})
+	var accountRules = null
+	for (let address of accountAddressList) {
+		if (accountRules = rulesHandler.getRulesForAddress(address)) break
+	}
 	if (!accountRules) return false
 	this.accountRules = accountRules
 	
@@ -264,36 +294,19 @@ SpamFilterHandler.prototype.loadAccountRules = function() {
 */
 SpamFilterHandler.prototype.getRuleAndAccountFromMailbox = function(mailbox) {
 	this.account = mailbox.account
-	const boxName = mailbox.name/*,
-		accountAddressList = this.account.emailAddressList
-		
-	// search account specific rules object
-	const accountRules = rulesList.find(function(rule) {
-		return accountAddressList.some(function(address){
-			return address === rule.email
-		})
-	})
-	if (!accountRules) return null*/
+	const boxName = mailbox.name
+	
 	if (!this.loadAccountRules()) return null;
 	
 	// choose either the default rule for INBOX or one for cutom mailboxes
 	let rule = null
-	/*if (boxName.includes('INBOX')) {
-		rule = {email: this.accountRules.email,
-			fromWhitelist: this.accountRules.fromWhitelist,
-			senderBlacklist: this.accountRules.senderBlacklist,
-			subjectBlacklist: this.accountRules.subjectBlacklist,
-			contentBlacklist: this.accountRules.contentBlacklist
-		}
-	} else*/ if (Array.isArray(this.accountRules.mailboxList)
+	if (Array.isArray(this.accountRules.mailboxList)
 		  && this.accountRules.mailboxList.length > 0) {
 		rule = this.accountRules.mailboxList.find(function(rule){
 			return boxName === rule.name
 		})
 		if (rule) rule.email = this.accountRules.email
 	}
-	
-	//this.accountRules = accountRules
 	return rule
 }
 
@@ -436,7 +449,7 @@ SpamFilterHandler.prototype.filterAccountMailboxes = function() {
 
 
 /** log all message tests in separate file for debugging if shouldLogActivity == true */
-const ActivityLog = (function () {
+const ActivityLog = (function() {
 	if (!shouldLogActivity) {
 		// return dummy methods if logging switched off
 		const dummyFnc = function(){}
@@ -469,7 +482,7 @@ const ActivityLog = (function () {
 	}
 	
 	/** general log function appending entry as a line to file */
-	var log = function (str) {
+	var log = function(str) {
 		try {
 			fh.seekToEndOfFile
 			fh.writeData(ObjC.wrap(str +"\n").dataUsingEncoding($.NSUTF8StringEncoding))
@@ -482,14 +495,14 @@ const ActivityLog = (function () {
 	}
 	
 	/** log given message along with run type of test */
-	var logMessage = function (msg, runType) {
+	var logMessage = function(msg, runType) {
 		log(runType +",ts."+ Date.now() +": "+ msg.getField('dateReceived')
 		  +",id."+ msg.id +",box."+ msg.mailbox.name +","+ 
 		  msg.getField('sender') +", "+ msg.getField('subject'))
 	}
 	
 	/** close file before quit */
-	var finish = function () {
+	var finish = function() {
 		try {
 			fh.closeFile
 		} catch (e) {
@@ -504,7 +517,7 @@ const ActivityLog = (function () {
 })()
 
 /** manages mutex locks accessible to different spamfilter instances (osascript processes) */
-const RunCoordinator = (function () {
+const RunCoordinator = (function() {
 	const dir = mail.pathTo("library folder", {from: "user domain", folderCreation: false}
 		).toString() + "/Application Scripts/com.apple.mail/"
 	var path = '', mutex = null, gotLock = null
@@ -515,7 +528,7 @@ const RunCoordinator = (function () {
 	}
 	
 	/** try to get lock for specified resource id and return result */
-	RunCoordinator.prototype.tryLock = function () {
+	RunCoordinator.prototype.tryLock = function() {
 		mutex = $.NSDistributedLock.lockWithPath(path)
 
 		// force unlock if older than mutexLifetime (600) sec as normal unlocking seemed to fail
@@ -536,12 +549,12 @@ const RunCoordinator = (function () {
 	}
 	
 	/** returns true if got lock else false; null if tryLock() not yet called */
-	RunCoordinator.prototype.gotLock = function () {
+	RunCoordinator.prototype.gotLock = function() {
 		return gotLock
 	}
 	
 	/** unlock existing mutex */
-	RunCoordinator.prototype.unlock = function () {
+	RunCoordinator.prototype.unlock = function() {
 		if (mutex) mutex.unlock
 	}
 		
