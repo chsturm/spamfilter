@@ -20,26 +20,26 @@ The configuration of the script as well as your custom rules are stored in `spam
 {
   "shouldAlertMatchDetails": false,
   "rulesList": [
-	{
-	    "email": "me@example.com",
-		"fromWhitelist": {"shouldTest": false, "list": []},
-		"senderBlacklist": {"list": ["John Doe", "@evil.org", "GitHub"]},
-		"subjectBlacklist": {"list": ["50% off", "Account suspended"]},
-		"contentBlacklist": {"list": ["Dear customer"]}
-	},
-	{
-		"email": "foo@bar.com",
-		"fromWhitelist": {"shouldTest": true, "list": ["GitHub"]},
-		"senderBlacklist": {"list": ["Jane Doe", "support@evil.org"]},
-		"subjectBlacklist": {"list": []},
-		"contentBlacklist": {"list": ["Dear customer"]},
-		"mailboxList": [{"name": "Another Mailbox",
-		    "fromWhitelist": {"shouldTest": false, "list": []},
-		    "senderBlacklist": {"list": []},
-		    "subjectBlacklist": {"list": ["50% off"]},
-		    "contentBlacklist": {"list": []}
-		}]
-	}
+    {
+        "email": "me@example.com",
+        "fromWhitelist": {"shouldTest": false, "list": []},
+        "senderBlacklist": {"list": ["John Doe", "@evil.org", "GitHub"]},
+        "subjectBlacklist": {"list": ["50% off", "Account suspended"]},
+        "contentBlacklist": {"list": ["Dear customer"]}
+    },
+    {
+        "email": "foo@bar.com",
+        "fromWhitelist": {"shouldTest": true, "list": ["GitHub"]},
+        "senderBlacklist": {"list": ["Jane Doe", "support@evil.org"]},
+        "subjectBlacklist": {"list": []},
+        "contentBlacklist": {"list": ["Dear customer"]},
+        "mailboxList": [{"name": "Another Mailbox",
+            "fromWhitelist": {"shouldTest": false, "list": []},
+            "senderBlacklist": {"list": []},
+            "subjectBlacklist": {"list": ["50% off"]},
+            "contentBlacklist": {"list": []}
+        }]
+    }
   ]
 }
 ```
