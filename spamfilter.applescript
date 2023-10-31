@@ -116,12 +116,17 @@ RulesHandler.prototype.getRulesForAddress = function(address) {
 /** handler called by terminal via osascript -l JavaScript <path> */
 function run () {
 	mail.downloadHtmlAttachments = false
-	const accountList = mail.accounts()
+	const accountList = mail.accounts()  //.whose({_match: [ObjectSpecifier().enabled, true]})()
 	var shouldDisplayNotification = false
 	if (!rulesHandler.loadRulesList()) return
 	
 	accountList.forEach(function(account){
-		if (account.enabled() === false) return
+		try {
+			if (account.enabled() === false) return
+		} catch (e) {
+			// account.enabled throws error on Big Sur
+			//ActivityLog.log(e.message)
+		}
 		
 		const filterHandler = new SpamFilterHandler()
 		filterHandler.account = new Account(account)
