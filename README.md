@@ -25,7 +25,10 @@ The configuration of the script as well as your custom rules are stored in `spam
         "fromWhitelist": {"shouldTest": false, "list": []},
         "senderBlacklist": {"list": ["John Doe", "@evil.org", "GitHub"]},
         "subjectBlacklist": {"list": ["50% off", "Account suspended"]},
-        "contentBlacklist": {"list": ["Dear customer"]}
+        "contentBlacklist": {"list": ["Dear customer"]},
+        "headerBlacklist": [{"name": "received", "list": ["from mta.eval.to"],
+            {"name": "content-type", "list": ["application/"]
+        }]
     },
     {
         "email": "foo@bar.com",
@@ -52,6 +55,7 @@ The `rulesList` property contains the array of mail accounts for which you want 
 * `senderBlacklist` compares the "From" header of the message with all items in the corresponding blacklist. Those items can be names,  email addresses or only string components of them.
 * `subjectBlacklist` compares the "Subject" header of the message with all items in the blacklist.
 * `contentBlacklist` compares the message content with all items in the blacklist. Only text content is tested. Binary data is skipped.
+* `headerBlacklist` [optional] compares arbitrary message headers defined by the `name` property (lower-case) with all items in the corresponding blacklist.
 * `mailboxList` [optional] a list of rule objects for additional mailboxes different from the default INBOX. Those rules work analogously to the ones above, but only for a specific mailbox.
 
 All comparisons with list items are case-sensitive.
