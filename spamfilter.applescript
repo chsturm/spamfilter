@@ -1,6 +1,6 @@
 /*
 spamfilter for Apple Mail.app
-Copyright (c) 2023 Christian Sturm
+Copyright (c) 2024 Christian Sturm
 
 This program is free software: you can redistribute it and/or modify
 it under the terms of the GNU General Public License as published by
@@ -289,7 +289,8 @@ SpamFilterHandler.prototype.loadAccountRules = function() {
 		fromWhitelist: accountRules.fromWhitelist,
 		senderBlacklist: accountRules.senderBlacklist,
 		subjectBlacklist: accountRules.subjectBlacklist,
-		contentBlacklist: accountRules.contentBlacklist
+		contentBlacklist: accountRules.contentBlacklist,
+		headerBlacklist: accountRules.headerBlacklist
 	})
 	return true
 }
@@ -318,10 +319,12 @@ SpamFilterHandler.prototype.getRuleAndAccountFromMailbox = function(mailbox) {
 /** Applies spam filter operation on given message */
 SpamFilterHandler.prototype.filterMessage = function(rule, message) {
 	// delete message as soon as a blacklist match is detected
+	
 	if (testSelfAddressedForFullName(rule.email, message)
 		 || testSenderForFullName(rule.fromWhitelist, message)
 		 || testMessageField('sender', rule.senderBlacklist, message)
 		 || testMessageField('subject', rule.subjectBlacklist, message)
+		 || testHeaders(rule.headerBlacklist, message)
 		 || testMessageField('source', rule.contentBlacklist, message)) {
 		// mark message as processed by spamfilter for debugging
 		/*message.flagIndex = 6;	// grey
@@ -597,6 +600,15 @@ function testSenderForFullName (whitelist, message) {
 	return res
 }
 
+/** returns spam match (true) if at least one entry in blacklist matches */
+function testHeaders (headerBlacklist, message) {
+	if (!headerBlacklist) return false
+	
+	return headerBlacklist.some(function(item) {
+		return testMessageField(item.name, item, message)
+	})
+}
+
 /** tests for matches between message field and blacklist */
 function testMessageField (field, blacklist, message) {
 	const searchContent = message.getField(field)
@@ -606,6 +618,8 @@ function testMessageField (field, blacklist, message) {
 		//const headers = message.allHeaders()
 		var boundary = ''
 	} else {  // i.e. sender, subject
+		if (searchContent.length == 0) return false
+		
 		// delete unicode cheat chars
 		const normalizedContent = cheatChars.reduce(function(res, item) {
 			return res.replace(new RegExp(item, 'g'), '')
@@ -1281,7 +1295,20 @@ Message.prototype.moveToMailbox = function(box){
 	this._mailbox = new Mailbox(box._raw)
 }
 Message.prototype.getField = function(key){
-	if (!this[key]) this[key] = this._raw[key]()
+	if (this[key]) return this[key]
+
+	try {
+		this[key] = this._raw[key]()
+	} catch (err) {
+	  	//const header = this._raw.headers.byName(key)
+		const headersFiltered = this._raw.headers.whose({name: {_equals: key}}),
+		  header = Array.prototype.reduce.call(headersFiltered, (acc, item) => {
+		    return `${acc}\n ${item.content()}`
+		  }, '')
+		
+		this[key] = header
+	}
+	
 	return this[key]
 }
 
