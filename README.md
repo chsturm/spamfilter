@@ -26,9 +26,9 @@ The configuration of the script as well as your custom rules are stored in `spam
         "senderBlacklist": {"list": ["John Doe", "@evil.org", "GitHub"]},
         "subjectBlacklist": {"list": ["50% off", "Account suspended"]},
         "contentBlacklist": {"list": ["Dear customer"]},
-        "headerBlacklist": [{"name": "received", "list": ["from mta.eval.to"],
-            {"name": "content-type", "list": ["application/"]
-        }]
+        "headerBlacklist": [{"name": "received", "list": ["from mta.eval.to"]},
+            {"name": "content-type", "list": ["application/"]}
+        ]
     },
     {
         "email": "foo@bar.com",
