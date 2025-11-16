@@ -1,6 +1,6 @@
 /*
-spamfilter for Apple Mail.app
-Copyright (c) 2024 Christian Sturm
+spamfilter for Apple Mail.app on macOS
+Copyright (c) 2025 Christian Sturm
 
 This program is free software: you can redistribute it and/or modify
 it under the terms of the GNU General Public License as published by
@@ -322,7 +322,7 @@ SpamFilterHandler.prototype.filterMessage = function(rule, message) {
 	
 	if (testSelfAddressedForFullName(rule.email, message)
 		 || testSenderForFullName(rule.fromWhitelist, message)
-		 || testMessageField('sender', rule.senderBlacklist, message)
+		 || testMessageField('from', rule.senderBlacklist, message)
 		 || testMessageField('subject', rule.subjectBlacklist, message)
 		 || testHeaders(rule.headerBlacklist, message)
 		 || testMessageField('source', rule.contentBlacklist, message)) {
@@ -372,8 +372,8 @@ SpamFilterHandler.prototype.filterMailbox = function(boxRule, mailbox) {
 	  && mailbox.messageCount == initMessageCount) {
 		const message = mailbox.getMessageByIndex(msgIdx),
 			readStatus = message.readStatus
-		if (readStatus === null) {
-			ActivityLog.log("readStatus = null")
+		if (readStatus === null || readStatus === undefined) {
+			ActivityLog.log("readStatus = null/undefined")
 			mailbox.refreshMessageList()
 			return false
 		}
@@ -504,9 +504,14 @@ const ActivityLog = (function() {
 	
 	/** log given message along with run type of test */
 	var logMessage = function(msg, runType) {
+		const receivedArr = msg.getField('received').trim().split(' ', 2)
 		log(runType +",ts."+ Date.now() +": "+ msg.getField('dateReceived')
-		  +",id."+ msg.id +",box."+ msg.mailbox.name +","+ 
-		  msg.getField('sender') +", "+ msg.getField('subject'))
+		  +",id."+ msg.id
+		  +",box."+ msg.mailbox.name
+		  +","+ msg.getField('from')
+		  +", rcvd:"+ receivedArr.join(' ')
+		  +", "+ msg.getField('subject')
+		)
 	}
 	
 	/** close file before quit */
@@ -575,9 +580,9 @@ function alertMatchDetails (field, item) {
 	mail.displayDialog(field +': '+ item, {withTitle: 'Spamfilter match details'})
 }
 
-/** returns spam match (true) if self addressed email (sender === receiver address) doesn't include account owner's full name */
+/** returns spam match (true) if self addressed email (from === receiver address) doesn't include account owner's full name */
 function testSelfAddressedForFullName (accountEmail, message) {
-	var from = message.getField('sender')
+	var from = message.getField('from')
 	if (from == "") return true  // no sender provided
 	if (from.includes(accountEmail)) {
 		const res = !from.includes(message.mailbox.account.fullName)
@@ -590,7 +595,7 @@ function testSelfAddressedForFullName (accountEmail, message) {
 /** returns spam match (true) if sender's name consists of only one word not included in whitelist and whitelist.shouldTest == true */
 function testSenderForFullName (whitelist, message) {
 	if (!whitelist.shouldTest) return false
-	const from = message.getField('sender')
+	const from = message.getField('from')
 	const addressIdx = from.indexOf("<")  // e.g. X Y <xy@abc.com>
 	if (addressIdx <= 0) return false
 	const name = from.substring(0, addressIdx).trim().replace(/"/g, '')
@@ -617,7 +622,7 @@ function testMessageField (field, blacklist, message) {
 		// determine boundary for multipart messages
 		//const headers = message.allHeaders()
 		var boundary = ''
-	} else {  // i.e. sender, subject
+	} else {  // i.e. from, subject
 		if (searchContent.length == 0) return false
 		
 		// delete unicode cheat chars
@@ -1298,6 +1303,10 @@ Message.prototype.getField = function(key){
 	if (this[key]) return this[key]
 
 	try {
+		// JXA API calls 'from' header 'sender'
+		if (key == 'from') this[key] = this._raw['sender']()
+		else if (key == 'sender') throw new Error('')  // get real 'sender' header
+		
 		this[key] = this._raw[key]()
 	} catch (err) {
 	  	//const header = this._raw.headers.byName(key)
@@ -1306,7 +1315,7 @@ Message.prototype.getField = function(key){
 		    return `${acc}\n ${item.content()}`
 		  }, '')
 		
-		this[key] = header
+		this[key] = header//.content()
 	}
 	
 	return this[key]

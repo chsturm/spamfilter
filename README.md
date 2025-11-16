@@ -1,4 +1,4 @@
-# spamfilter for Apple Mail.app
+# spamfilter for Apple Mail.app on macOS
 This spamfilter lets you easily define keyword-based filter rules for each of your email accounts individually. It makes use of Mail.app's scripting interface for Applescript and JXA.
 Spam messages are marked as Junk and moved to the trash folder.
 
@@ -14,7 +14,7 @@ As rule invokation is restricted to default inboxes it might be desirable to als
 Perform the steps stated above, except step 3: Run `sh install.sh -launchagent` to set up the default launch agent or `sh install.sh -launchagent 600` to configure your own interval in seconds, e.g., 600 for 10 minutes.
 
 ## Configuration
-The configuration of the script as well as your custom rules are stored in `spamfilter-rules.json`. Edit this file using the text editor of your choice. A sample might look like this:
+The configuration of the script as well as your custom rules are stored in `~/Library/Application Scripts/com.apple.mail/spamfilter-rules.json`. Edit this file using the text editor of your choice. A sample might look like this:
 
 ```javascript
 {
@@ -55,7 +55,7 @@ The `rulesList` property contains the array of mail accounts for which you want 
 * `senderBlacklist` compares the "From" header of the message with all items in the corresponding blacklist. Those items can be names,  email addresses or only string components of them.
 * `subjectBlacklist` compares the "Subject" header of the message with all items in the blacklist.
 * `contentBlacklist` compares the message content with all items in the blacklist. Only text content is tested. Binary data is skipped.
-* `headerBlacklist` [optional] compares arbitrary message headers defined by the `name` property (lower-case) with all items in the corresponding blacklist.
+* `headerBlacklist` [optional] compares further arbitrary message headers defined by the `name` property (lower-case) with all items in the corresponding blacklist.
 * `mailboxList` [optional] a list of rule objects for additional mailboxes different from the default INBOX. Those rules work analogously to the ones above, but only for a specific mailbox.
 
 All comparisons with list items are case-sensitive.

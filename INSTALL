@@ -1,22 +1,25 @@
-spamfilter for Apple Mail.app
+spamfilter for Apple Mail.app on macOS
 
 This spamfilter lets you easily define keyword-based filter rules for each of your email accounts individually. It makes use of Mail.app's scripting interface for Applescript and JXA. Spam messages are marked as Junk and moved to the trash folder.
 
 
 INSTALLATION
+
 There are two invokation modes for the spamfilter script that impose different installation tasks. The first mode relies on Mail.app's rule infrastructure to automate handling of new incoming messages dedicated to default inboxes:
 
-1. Download spamfilter.zip from Releases
+1. Download spamfilter.zip from https://github.com/chsturm/spamfilter/releases
 2. Extract zip archive, open Terminal and change working directory to spamfilter directory via 'cd path/to/spamfilter_dir'
 3. Run 'sh install.sh'
 4. Open Mail.app's preferences pane and go to "Rules"
 5. Add a new rule with action "Run Applescript" choosing spamfilter.scpt
 
-As rule invokation is restricted to default inboxes it might be desirable to also enable filtering on other mailboxes. The second mode checks all mailboxes in a 15 minutes interval by setting up a launch agent for launchd daemon: Perform the steps stated above, except step 3: Run 'sh install.sh -launchagent' to set up the default launch agent or 'sh install.sh -launchagent 600' to configure your own interval in seconds, e.g., 600 for 10 minutes.
+As rule invokation is restricted to default inboxes it might be desirable to also enable filtering on other mailboxes. The second mode checks all mailboxes in a 15 minutes interval by setting up a launch agent for launchd daemon:
+Perform the steps stated above, except step 3: Run 'sh install.sh -launchagent' to set up the default launch agent or 'sh install.sh -launchagent 600' to configure your own interval in seconds, e.g., 600 for 10 minutes.
 
 
 CONFIGURATION
-The configuration of the script as well as your custom rules are stored in spamfilter-rules.json. Edit this file using the text editor of your choice. A sample might look like this:
+
+The configuration of the script as well as your custom rules are stored in ~/Library/Application Scripts/com.apple.mail/spamfilter-rules.json. Edit this file using the text editor of your choice. A sample might look like this:
 
 {
   "shouldAlertMatchDetails": false,
@@ -26,7 +29,10 @@ The configuration of the script as well as your custom rules are stored in spamf
 		"fromWhitelist": {"shouldTest": false, "list": []},
 		"senderBlacklist": {"list": ["John Doe", "@evil.org", "GitHub"]},
 		"subjectBlacklist": {"list": ["50% off", "Account suspended"]},
-		"contentBlacklist": {"list": ["Dear customer"]}
+		"contentBlacklist": {"list": ["Dear customer"]},
+        "headerBlacklist": [{"name": "received", "list": ["from mta.eval.to"]},
+            {"name": "content-type", "list": ["application/"]}
+        ]
 	},
 	{
 		"email": "foo@bar.com",
@@ -53,6 +59,7 @@ The rulesList property contains the array of mail accounts for which you want to
 - 'senderBlacklist' compares the "From" header of the message with all items in the corresponding blacklist. Those items can be names, email addresses or only string components of them.
 - 'subjectBlacklist' compares the "Subject" header of the message with all items in the blacklist.
 - 'contentBlacklist' compares the message content with all items in the blacklist. Only text content is tested. Binary data is skipped.
+- 'headerBlacklist' [optional] compares further arbitrary message headers defined by the `name` property (lower-case) with all items in the corresponding blacklist.
 - 'mailboxList' [optional] a list of rule objects for additional mailboxes different from the default INBOX. Those rules work analogously to the ones above, but only for a specific mailbox.
 
 All comparisons with list items are case-sensitive.
