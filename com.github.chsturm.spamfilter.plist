@@ -11,7 +11,7 @@
 	</array>
     
 	<key>RunAtLoad</key>
-	<false/>
+	<true/>
 	<key>StartInterval</key>
 	<integer>LAUNCH_INTERVAL</integer>
 </dict>
