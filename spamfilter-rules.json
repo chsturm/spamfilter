@@ -1,28 +1,60 @@
 {
   "shouldAlertMatchDetails": false,
+  "shouldLogActivity": false,
   "rulesList": [
-	{
-		"email": "me@example.com",
-		"fromWhitelist": {"shouldTest": false, "list": []},
-		"senderBlacklist": {"list": ["John Doe", "@evil.org", "GitHub"]},
-		"subjectBlacklist": {"list": ["50% off", "Account suspended"]},
-		"contentBlacklist": {"list": ["Dear customer"]},
-		"headerBlacklist": [{"name": "received", "list": ["from mta.eval.to"]},
-		    {"name": "content-type", "list": ["application/"]}
-		]
-	},
-	{
-		"email": "foo@bar.com",
-		"fromWhitelist": {"shouldTest": true, "list": ["GitHub"]},
-		"senderBlacklist": {"list": ["Jane Doe", "support@evil.org"]},
-		"subjectBlacklist": {"list": []},
-		"contentBlacklist": {"list": ["Dear customer"]},
-		"mailboxList": [{"name": "Another Mailbox",
-		    "fromWhitelist": {"shouldTest": false, "list": []},
-		    "senderBlacklist": {"list": []},
-		    "subjectBlacklist": {"list": ["50% off"]},
-		    "contentBlacklist": {"list": []}
-		}]
-	}
+    {
+        "email": "me@example.com",
+        "name": "Example.com",
+        "trustList": {"authResultsIssuers": "example.com", "selectorMode": "relaxed", "list": [
+            {"selector": ["Alice Bobman", "Bobman, Alice"], "policyList": [
+                {"addresses": "alice.bobman@examplemail.com", "dkim": "self", "spf": "strict", "authResults": {"methods": "dkim,spf,dmarc"}}
+            ]},
+            {"selector": "Example", "policyList": [
+                {"addresses": "*@example.com", "dkim": "self", "spf": "strict", "authResults": {"methods": "dkim,spf,dmarc"}},
+                {"addresses": "*@examplemail.com", "onRemedy": "skip", "dkim": "self", "spf": "strict", "authResults": {"methods": "dkim,spf,dmarc"}, "proceedTests": true}
+            ]}
+        ]},
+        "fromWhitelist": {"shouldTest": false, "list": []},
+        "senderBlacklist": {"similarityList": [{"selector": "GitHub", "similarityMode": "dl:2"}],
+            "list": ["John Doe", "@evil.org"]},
+        "subjectBlacklist": {"list": ["50% off", "Account suspended"]},
+        "contentBlacklist": {"list": ["Dear customer"]},
+        "headerBlacklist": [{"name": "received", "list": ["from mta.eval.to"]},
+            {"name": "content-type", "list": ["application/"]}
+        ]
+    },
+    {
+        "email": "foo@bar.com",
+        "trustList": {"authResultsIssuers": "bar.com", "onViolation": "trash", "list": [
+            {"selector": "GitHub", "policyList": [
+                {"addresses": "*@github.com", "blueprint": "default-full", "proceedTests": true},
+                {"addresses": "josh@macgithubintosh.cc, *.macgithubintosh.cc", "dmarc": "s,r;macgithubintosh.cc", "headerList": [
+                    {"return-path": "@bounce.macgithubintosh.cc>", "to": "myalias@bar.com"}], "proceedTests": true}
+            ]},
+            {"selector": ["Microsoft", "office365support"], "similarityMode": "jw:0.64", "shouldAlertSimilarity": true, "policyList": [
+                {"addresses": "*@microsoft.com, *.microsoft.com, *@office365support.com", "dmarc": "s,s", "authResults": {"methods": "dkim,spf,dmarc", "borderlineMode": "strict:softfail"}}
+            ]},
+            {"selector": "Jeanne Doe", "policyList": [
+                {"addresses": "jeanne.doe@foo.com", "blueprint": "foo.com"}
+            ]},
+            {"selector": "Joe Doe", "policyList": [
+                {"addresses": "joe.doe@foo.com", "blueprint": "foo.com"},
+                {"addresses": "joe@doe.net", "blueprint": "default-full", "onViolation": "flag"}
+            ]}
+        ], "policyBlueprints": {
+            "default-full": {"dkim": "self", "spf": "strict", "dmarc": "s,s", "authResults": {"methods": "dkim,spf,dmarc"}, "onViolation": "trash"},
+            "foo.com": {"dkim": "self", "authResults": {"methods": "dkim,spf,dmarc"}, "onViolation": "flag"}
+        }},
+        "fromWhitelist": {"shouldTest": true, "list": ["GitHub"]},
+        "senderBlacklist": {"list": ["Jane Doe", "support@evil.org"]},
+        "subjectBlacklist": {"list": []},
+        "contentBlacklist": {"list": ["Dear customer"]},
+        "mailboxList": [{"name": "Another Mailbox",
+            "fromWhitelist": {"shouldTest": false, "list": []},
+            "senderBlacklist": {"list": []},
+            "subjectBlacklist": {"list": ["50% off"]},
+            "contentBlacklist": {"list": []}
+        }]
+    }
   ]
 }
