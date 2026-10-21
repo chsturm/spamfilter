@@ -1,9 +1,9 @@
-# spamfilter for Apple Mail.app on macOS
-This spamfilter lets you easily define keyword-based filter rules as well as authentication policies for the senders you trust. These rules can be applied for each of your email accounts individually and cause spam messages to be marked as Junk and moved to the trash folder.
+# spamfilter.scpt for Apple Mail.app on macOS
+This spam filter lets you easily define keyword-based filter rules as well as authentication policies for the senders you trust. These rules can be applied for each of your email accounts individually and cause spam messages to be marked as Junk and moved to the trash folder.
 This filter makes use of Mail.app's scripting interface for Applescript and JXA.
 
 ## Installation
-There are two invokation modes for the spamfilter script that impose different installation tasks. The first mode relies on Mail.app's rule infrastructure to automate handling of new incoming messages dedicated to default inboxes:
+There are two invokation modes for the spam filter script that impose different installation tasks. The first mode relies on Mail.app's rule infrastructure to automate handling of new incoming messages dedicated to default inboxes:
 1. Download `spamfilter.zip` from [Releases](https://github.com/chsturm/spamfilter/releases)
 2. Extract zip archive, open Terminal and change working directory to spamfilter directory via `cd path/to/spamfilter`
 3. Run `sh install.sh` and answer the questions
@@ -179,7 +179,7 @@ Selector and policy objects are processed in the order as defined in `spamfilter
 
 No DNS queries are run for DKIM, SPF and DMARC, hence the respective checks above involve only plausibility tests with information extracted from the message.
 
-If you need any help to determine the authentication methods a trusted sender seems to support, please have a look at spamfilter's command line mode described down in section [CLI mode](#cli-mode).
+If you need any help to determine the authentication methods a trusted sender seems to support, please have a look at spamfilter.scpt's command line mode described down in section [CLI mode](#cli-mode).
 
 #### Explanation of the example `trustList` objects above
 ##### Account `Example.com`
@@ -215,7 +215,7 @@ The next two trust list items cover employees of `foo.com` with selectors `Jeann
 Additionally, `Joe Doe` has another policy for his private email address `joe@doe.net`. The authentication methods are taken from blueprint `default-full`, which requires all implemented methods in `strict` mode and moves violating messages to trash. However, the policy overwrites the violation action to just flag such messages as junk.
 
 ## CLI mode
-To simplify debugging as well as detecting past and unrecognized phishing events, the spamfilter script can be called in command line interface mode via the Terminal app:
+To simplify debugging as well as detecting past and unrecognized phishing events, spamfilter.scpt can be called in command line interface mode via the Terminal app:
 
 `osascript "~/Library/Application Scripts/com.apple.mail/spamfilter.scpt" <cmd>`  
 or via `spamfilterctl.sh` found in the zip archive: `sh spamfilterctl.sh <cmd>`
@@ -293,7 +293,7 @@ In addition to your own rules there are some more tests that are always performe
 * Zero-width whitespace chars, e.g., `U+FEFF`
 
 ### Bugs in Mail.app
-There seems to be a bug in Mail.app preventing the correct processing of all messages in case you receive multiple messages at once. A bug circumvention was added to spamfilter.scpt. However, if you still note unprocessed messages, you can trigger the spamfilter by selecting any remaining messages and running Mail.app rules manually via `alt+cmd+L` or via its right-click context menu.
+There seems to be a bug in Mail.app preventing the correct processing of all messages in case you receive multiple messages at once. A bug circumvention was added to spamfilter.scpt. However, if you still note unprocessed messages, you can trigger the spam filter by selecting any remaining messages and running Mail.app rules manually via `alt+cmd+L` or via its right-click context menu.
 Mail only triggers its built-in rule system for new messages stored to the default INBOX, but not in other mailboxes your server may provide. Automatic filtering on all mailboxes is therefore performed as soon as a new message is received in INBOX.
 
 ## Acknowledgments
