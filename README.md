@@ -1,6 +1,6 @@
 # spamfilter.scpt for Apple Mail.app on macOS
 This script provides both a spam filter, that lets you easily define keyword-based filter rules, as well as a phishing detector, that lets you define authentication policies for the senders you trust. All of these rules can be applied for each of your email accounts individually and cause spam messages to be marked as junk and moved to the trash folder.  
-spamfilter.scpt makes use of Mail.app's scripting interface for Applescript and JXA.
+spamfilter.scpt makes use of Mail.app's scripting interface for AppleScript and JXA.
 
 ## Installation
 There are two invokation modes for the spam filter script that impose different installation tasks. The first mode relies on Mail.app's rule infrastructure to automate handling of new incoming messages dedicated to default inboxes:
