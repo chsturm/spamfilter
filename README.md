@@ -1,6 +1,6 @@
 # spamfilter.scpt for Apple Mail.app on macOS
-This spam filter lets you easily define keyword-based filter rules as well as authentication policies for the senders you trust. These rules can be applied for each of your email accounts individually and cause spam messages to be marked as Junk and moved to the trash folder.
-This filter makes use of Mail.app's scripting interface for Applescript and JXA.
+This script provides both a spam filter, that lets you easily define keyword-based filter rules, as well as a phishing detector, that lets you define authentication policies for the senders you trust. All of these rules can be applied for each of your email accounts individually and cause spam messages to be marked as junk and moved to the trash folder.  
+spamfilter.scpt makes use of Mail.app's scripting interface for Applescript and JXA.
 
 ## Installation
 There are two invokation modes for the spam filter script that impose different installation tasks. The first mode relies on Mail.app's rule infrastructure to automate handling of new incoming messages dedicated to default inboxes:
@@ -10,7 +10,7 @@ There are two invokation modes for the spam filter script that impose different 
 4. Open Mail.app's preferences pane and go to "Rules"
 5. Add a new rule with action "Run Applescript" choosing spamfilter.scpt
 
-As rule invokation is restricted to default inboxes it might be desirable to also enable filtering on other mailboxes. This second invocation mode checks all mailboxes in a 15 minutes interval by setting up a launch agent for `launchd` daemon:
+As rule invokation is restricted to default inboxes it may be desirable to also enable filtering on other mailboxes. This second invocation mode checks all mailboxes in a 15 minutes interval by setting up a launch agent for `launchd` daemon:
 Perform the steps stated above, except step 3: Run `sh install.sh -launchagent` to set up the default launch agent or `sh install.sh -launchagent 600` to configure your own interval in seconds, e.g., 600 for 10 minutes.
 
 ## Configuration
