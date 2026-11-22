@@ -236,9 +236,9 @@ In case of execution errors, ensure that Terminal.app is allowed to control Mail
 ```
 Similarity results for "GitHub" and "GltHUB <noreply@gitlhub.com>"
 Canonicalized forms: "github" and "glthub <noreply gitlhub com>"
-Equality:			            false
-Damerau-Levenshtein distance:	1
-Jaro-Winkler similarity:	    1
+Equality:                       false
+Damerau-Levenshtein distance:   1
+Jaro-Winkler similarity:        1
 ```
 Jaro-Winkler algorithm returns fully identical due to its prefix boost, Damerau-Levenshtein a minimum distance of 1.
 
