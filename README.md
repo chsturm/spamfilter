@@ -11,7 +11,7 @@ There are two invocation modes for the spam filter script that impose different 
 5. Add a new rule with action "Run Applescript" choosing spamfilter.scpt
 
 As rule invocation is restricted to default inboxes, it may be desirable to additionally enable filtering on other mailboxes. This second invocation mode checks all mailboxes in a 15 minutes interval by setting up a launch agent for `launchd`:  
-Perform the steps stated above, except step 3: Run `sh install.sh -launchagent` to set up the default launch agent or `sh install.sh -launchagent 600` to configure your own interval in seconds, e.g., 600 for 10 minutes. On the first run, you will be asked to permit `spamfilterctl` as a background object and to control Mail.app (see System Settings -> Privacy & Security -> Automation).
+Perform the steps stated above, except step 3: Run `sh install.sh -launchagent` to set up the default launch agent or `sh install.sh -launchagent 600` to configure your own interval in seconds, e.g., 600 for 10 minutes. On the first run, you will be asked to permit `spamfilterctl` as a background object and to control Mail.app (see _System Settings -> Privacy & Security -> Automation_).
 
 `spamfilterctl` is also a command line tool (x86_64, arm64) that assists you in identifying and debugging suitable rules/ policies (see section [CLI mode](#cli-mode)).
 
@@ -229,7 +229,7 @@ where `<cmd>` can be one of the following options:
 2. `--match-details` Temporarily sets the `shouldAlertMatchDetails` config to `true` and runs the filter process.
 3. `--help` Prints a list of all available commands.
 
-In case of execution errors, ensure that Terminal.app is allowed to control Mail.app; see System Settings -> Privacy & Security -> Automation. This permission can be revoked for the time you don't need the CLI mode.
+In case of execution errors, ensure that Terminal.app is allowed to control Mail.app; see _System Settings -> Privacy & Security -> Automation_. This permission can be revoked for the time you don't need the CLI mode.
 
 ### Examples
 `--similarity GitHub "GltHUB <noreply@gitlhub.com>"`
