@@ -6,7 +6,8 @@ script_dir="$HOME/Library/Application Scripts/com.apple.mail"
 rules_file="spamfilter-rules.json"
 launchagent_file="com.github.chsturm.spamfilter.plist"
 launchagent_path="$HOME/Library/LaunchAgents/$launchagent_file"
-ctl_file="spamfilterctl.sh"
+ctl_file="spamfilterctl"
+ctl_full_path="/usr/local/bin/$ctl_file"
 
 # copy spamfilter script
 cp spamfilter.scpt $script_dir
@@ -25,7 +26,6 @@ else
     cp $rules_file $script_dir
 fi
 
-
 # create launch agent
 if [ $# -gt 0 ] && [ "$launchagent_flag" == "-launchagent" ]
 then
@@ -42,15 +42,26 @@ then
     fi
     sed -i "" "s+LAUNCH_INTERVAL+$itvl+g" $launchagent_path
     
+    echo "Root privileges required to install $ctl_file in /usr/local/bin"
+    sudo cp $ctl_file /usr/local/bin && sudo chmod o+x $ctl_full_path 
+    
+    launchctl unload $launchagent_path
     launchctl load -w $launchagent_path
+else
+    # install spamfilterctl as shortcut for CLI mode
+    if [ -e $ctl_full_path ]
+    then
+        echo "Overwriting $ctl_file to /usr/local/bin (root privileges required)"
+        sudo cp $ctl_file /usr/local/bin && sudo chmod o+x $ctl_full_path
+    else
+        echo "Install $ctl_file to /usr/local/bin as CLI mode shortcut (root privileges required)? (y/n)"
+        read user_input
+        if [ $user_input == "y" ]
+        then
+            sudo cp $ctl_file /usr/local/bin && sudo chmod o+x $ctl_full_path 
+        fi
+    fi
+    
 fi
 
-
-# install spamfilterctl.sh as shortcut for CLI mode
-echo "Copy $ctl_file to /usr/local/bin as CLI mode shortcut? (y/n)"
-read user_input
-if [ $user_input == "y" ]
-then
-    echo "Root privileges required"
-    sudo cp $ctl_file /usr/local/bin && sudo chmod a+x "/usr/local/bin/$ctl_file"
-fi
+echo "Done"
