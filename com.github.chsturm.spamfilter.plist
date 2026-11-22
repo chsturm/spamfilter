@@ -6,8 +6,7 @@
 	<string>com.github.chsturm.spamfilter</string>
 	<key>ProgramArguments</key>
 	<array>
-	<string>osascript</string>
-	<string>HOME_DIR/Library/Application Scripts/com.apple.mail/spamfilter.scpt</string>
+	<string>/usr/local/bin/spamfilterctl</string>
 	</array>
     
 	<key>RunAtLoad</key>
@@ -16,4 +15,3 @@
 	<integer>LAUNCH_INTERVAL</integer>
 </dict>
 </plist>
-

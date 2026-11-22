@@ -1,17 +1,19 @@
 # spamfilter.scpt for Apple Mail.app on macOS
-This script provides both a spam filter, that lets you easily define keyword-based filter rules, as well as a phishing detector, that lets you define authentication policies for the senders you trust. All of these rules can be applied for each of your email accounts individually and cause spam messages to be marked as junk and moved to the trash folder.  
-spamfilter.scpt makes use of Mail.app's scripting interface for AppleScript and JXA.
+This script offers both a spam filter, which allows you to easily define keyword-based filter rules, and a phishing detector, which enables you to establish authentication policies for the senders you trust. All of these rules can be applied to each of your email accounts individually and cause spam messages to be marked as junk and moved to the trash folder.  
+spamfilter.scpt makes use of Mail.app's OSA scripting interface for AppleScript and JXA.
 
 ## Installation
-There are two invokation modes for the spam filter script that impose different installation tasks. The first mode relies on Mail.app's rule infrastructure to automate handling of new incoming messages dedicated to default inboxes:
+There are two invocation modes for the spam filter script that impose different installation tasks. The first mode relies on Mail.app's rule infrastructure to automate handling of new incoming messages dedicated to default inboxes:
 1. Download `spamfilter.zip` from [Releases](https://github.com/chsturm/spamfilter/releases)
 2. Extract zip archive, open Terminal and change working directory to spamfilter directory via `cd path/to/spamfilter`
 3. Run `sh install.sh` and answer the questions
 4. Open Mail.app's preferences pane and go to "Rules"
 5. Add a new rule with action "Run Applescript" choosing spamfilter.scpt
 
-As rule invokation is restricted to default inboxes it may be desirable to also enable filtering on other mailboxes. This second invocation mode checks all mailboxes in a 15 minutes interval by setting up a launch agent for `launchd` daemon:
-Perform the steps stated above, except step 3: Run `sh install.sh -launchagent` to set up the default launch agent or `sh install.sh -launchagent 600` to configure your own interval in seconds, e.g., 600 for 10 minutes.
+As rule invocation is restricted to default inboxes, it may be desirable to additionally enable filtering on other mailboxes. This second invocation mode checks all mailboxes in a 15 minutes interval by setting up a launch agent for `launchd`:  
+Perform the steps stated above, except step 3: Run `sh install.sh -launchagent` to set up the default launch agent or `sh install.sh -launchagent 600` to configure your own interval in seconds, e.g., 600 for 10 minutes. On the first run, you will be asked to permit `spamfilterctl` as a background object and to control Mail.app (see _System Settings -> Privacy & Security -> Automation_).
+
+`spamfilterctl` is also a command line tool (x86_64, arm64) that assists you in identifying and debugging suitable rules/ policies (see section [CLI mode](#cli-mode)).
 
 ## Configuration
 The configuration of the script as well as your custom rules are stored in `~/Library/Application Scripts/com.apple.mail/spamfilter-rules.json`. Edit this file using the text editor of your choice. A simple sample (without sender authentication policies) might look like this:
@@ -50,7 +52,7 @@ The configuration of the script as well as your custom rules are stored in `~/Li
 }
 ```
 
-Apart from your account-specific rules the JSON object above comprises general settings like `shouldAlertMatchDetails` that always affect the filtering regardless of your rules. `shouldAlertMatchDetails` set to `true` (boolean) helps debugging false-positives by telling you which rule has matched. `shouldLogActivity` logs more information about each message in the file `spamfilter.log` next to your `spamfilter-rules.json`.
+Apart from your account-specific rules, the JSON object above comprises general settings like `shouldAlertMatchDetails` that always affect the filtering regardless of your rules. `shouldAlertMatchDetails` set to `true` (boolean) helps debugging false-positives by telling you which rule has matched. `shouldLogActivity` logs more information about each message in the file `spamfilter.log` next to your `spamfilter-rules.json`.
 
 The `rulesList` property contains the array of mail accounts for which you want to enable filtering. Accounts not listed there, as well as already read messages, are not filtered at all. Here's a description of an account rule for its default INBOX:
 * `email` indicates the mail address of your account.
@@ -194,7 +196,7 @@ Selector `Example` covers all messages containing the canonicalized string `exam
 1. Sender address must originate from domain `example.com`. The same authentication properties mentioned for the first trust list item are applied to this policy, too. 
 2. Sender address must originate from domain `examplemail.com` and some authentication properties must be fulfilled. We assume `examplemail.com` to be a public mail service provider. As unknown people can register arbitrary email accounts then, two problems must be faced:
     * Messages could be spam, so white- and blacklist filters (`fromWhitelist`, etc.) should always be applied (`proceedTests` set to `true`).
-    * An attacker could forge an identity, e.g., `Alice Bobman <eve@examplemail.com>`, which would heal the violation of Alice's policy above (top-level `selectorMode` is `relaxed`). Thus, the policy's own `onRemedy` is set to `skip` to prevent the policy from being verified if its associated selector isn't the first one in the list that matched. So, a previous violation stays intact. Please note, that identity forgery would affect other trusted senders too if an attacker got access to a legitimate mail account and its outbound mail submission agent allowed arbitrary display names in "From" headers.
+    * An attacker could forge an identity, e.g., `Alice Bobman <eve@examplemail.com>`, which would heal the violation of Alice's policy above (top-level `selectorMode` is `relaxed`). Thus, the policy's own `onRemedy` is set to `skip` to prevent the policy from being verified if its associated selector isn't the first one in the list that matched. So, a previous violation stays intact. Please note that identity forgery would affect other trusted senders too if an attacker got access to a legitimate mail account and its outbound mail submission agent allowed arbitrary display names in "From" headers.
 
 ##### Account with email address `foo@bar.com`
 As a general requirement, some policy of the first matching selector must be fulfilled per default, whereas a selector match is found through simple canonical string search. The given trust list considers "Authentication-Results" headers exclusively created by `bar.com` or its subdomains and moves spam-classified messages to trash.
@@ -203,7 +205,7 @@ Selector `GitHub` defines two policies:
 1. Sender address must originate from domain `github.com`. As a shortcut, the authentication methods are all taken from the policy blueprint named `default-full`. It is defined as a property of the top-level `policyBlueprints` object and lists a "DKIM-Signature" header created by the sender domain (DMARC `s` mode) and a passed "Received-SPF" header matching both the "Return-Path" header and the sender domain with domain equality (DMARC `s` mode). Additionally, an "Authentication-Results" header (from `bar.com`, c.f. above) must list the passed methods `dkim`, `spf` and `dmarc`. The blueprint also requires to move violating messages to trash. If the message is trusted, i.e., no violation, still proceed with remaining tests (`fromWhitelist`, etc.).
 2. Sender address must be `josh@macgithubintosh.cc` or originate from a subdomain. The message must have a "DKIM-Signature" header created by the sender domain (DMARC `s` mode for DKIM) or a passed "Received-SPF" header matching the "Return-Path" header and aligning with the organizational domain `macgithubintosh.cc` (DMARC `r` mode for SPF). The sender domain must also align with the organizational domain then. Additionally, the "Return-Path" header must include `@bounce.macgithubintosh.cc>` and the "To" header must include the user's address `myalias@bar.com`. If the message is trusted, still proceed with remaining tests.
 
-If both policies are violated, the message is spam.
+As soon as a policy is violated, the message is spam.
 
 The second trust list item provides two alternative selectors `Microsoft` and `office365support`. The comparison between selectors and "From" header follows similarity mode Jaro-Winkler which requires the calculated score to be at least 0.64. This covers, e.g., the subtle substitution of I (capital i) with l (small L),  O (capital o) with 0 (zero) and S with $ as well as permutations of characters and digits. For debugging reasons, similarity details are alerted to the user.
 There is only one policy:
@@ -218,7 +220,7 @@ Additionally, `Joe Doe` has another policy for his private email address `joe@do
 To simplify debugging as well as detecting past and unrecognized phishing events, spamfilter.scpt can be called in command line interface mode via the Terminal app:
 
 `osascript "~/Library/Application Scripts/com.apple.mail/spamfilter.scpt" <cmd>`  
-or via `spamfilterctl.sh` found in the zip archive: `sh spamfilterctl.sh <cmd>`
+or via `spamfilterctl <cmd>` found in the zip archive (or in `/usr/local/bin` if installed)
 
 where `<cmd>` can be one of the following options:
 1. `--similarity <needle> <haystack>` Applies all similarity algorithms on the provided pair of strings and prints the results.
@@ -227,16 +229,16 @@ where `<cmd>` can be one of the following options:
 2. `--match-details` Temporarily sets the `shouldAlertMatchDetails` config to `true` and runs the filter process.
 3. `--help` Prints a list of all available commands.
 
-In case of execution errors, ensure that Terminal.app is allowed to control Mail.app; see System Settings -> Privacy & Security -> Automation. This permission can be revoked for the time you don't need the CLI mode.
+In case of execution errors, ensure that Terminal.app is allowed to control Mail.app; see _System Settings -> Privacy & Security -> Automation_. This permission can be revoked for the time you don't need the CLI mode.
 
 ### Examples
 `--similarity GitHub "GltHUB <noreply@gitlhub.com>"`
 ```
 Similarity results for "GitHub" and "GltHUB <noreply@gitlhub.com>"
 Canonicalized forms: "github" and "glthub <noreply gitlhub com>"
-Equality:			false
-Damerau-Levenshtein distance:	1
-Jaro-Winkler similarity:	1
+Equality:                       false
+Damerau-Levenshtein distance:   1
+Jaro-Winkler similarity:        1
 ```
 Jaro-Winkler algorithm returns fully identical due to its prefix boost, Damerau-Levenshtein a minimum distance of 1.
 
@@ -268,10 +270,12 @@ Addresses: me@example.com
 Mailboxes: Archive (100), Notes (5), INBOX (4046), Drafts (1), Sent Messages (734), Deleted Messages (51), Junk (12)
 ```
 
-## Build `spamfilter.scpt` file
-1. Open Terminal and change working directory to extracted zip archive via `cd path/to/spamfilter`.
-2. Run `sh build.sh`
-3. `spamfilter.scpt` has been created and is ready for installation
+## Build `spamfilter.scpt` and `spamfilterctl`
+The build process depends on the tools `osacompile` for `spamfilter.scpt` and Xcode for `spamfilterctl`.
+1. Download project source code archive from [Releases](https://github.com/chsturm/spamfilter/releases).
+2. Open Terminal and change working directory to extracted archive via `cd path/to/spamfilter`.
+3. Run `sh build.sh`
+4. Both `spamfilter.scpt` and `spamfilterctl` have been created within the spamfilter directory and are ready for installation.
 
 ## Deinstallation
 Unload launch agent in Terminal:
@@ -282,19 +286,19 @@ Remove the following files:
 - `~/Library/Application Scripts/com.apple.mail/spamfilter.scpt`
 - `~/Library/Application Scripts/com.apple.mail/spamfilter-rules.json`
 - `~/Library/LaunchAgents/com.github.chsturm.spamfilter.plist`
-- `/usr/local/bin/spamfilterctl.sh` (if installed)
+- `/usr/local/bin/spamfilterctl and, prior to v2.0.1, /usr/local/bin/spamfilterctl.sh` (if installed)
 
 ## Further notes
 ### Automatic filtering
-In addition to your own rules there are some more tests that are always performed and lead to spam matches:
-* Self-addressed messages, i.e., sender = receiver, without your full name as sender display name
+In addition to your own rules, there are some more tests that are always performed and lead to spam matches:
+* Self-addressed messages, i.e., sender = receiver, without your full name as the sender's display name
 * Certain file extensions of binaries sent within messages, e.g., `.exe`
 * Certain charsets, e.g., `gb2312` for Chinese
 * Zero-width whitespace chars, e.g., `U+FEFF`
 
 ### Bugs in Mail.app
 There seems to be a bug in Mail.app preventing the correct processing of all messages in case you receive multiple messages at once. A bug circumvention was added to spamfilter.scpt. However, if you still note unprocessed messages, you can trigger the spam filter by selecting any remaining messages and running Mail.app rules manually via `alt+cmd+L` or via its right-click context menu.
-Mail only triggers its built-in rule system for new messages stored to the default INBOX, but not in other mailboxes your server may provide. Automatic filtering on all mailboxes is therefore performed as soon as a new message is received in INBOX.
+Mail only triggers its built-in rule system for new messages stored in the default INBOX, but not in other mailboxes your server may provide. Automatic filtering on all mailboxes is therefore performed as soon as a new message is received in the INBOX.
 
 ## Acknowledgments
 * [JXA-Cookbook](https://github.com/JXA-Cookbook/JXA-Cookbook/wiki)

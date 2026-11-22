@@ -1,5 +1,5 @@
 /*
-spamfilter for Apple Mail.app on macOS
+spamfilter.scpt for Apple Mail.app on macOS
 Copyright (c) 2026 Christian Sturm
 
 This program is free software: you can redistribute it and/or modify
@@ -2537,20 +2537,23 @@ Mailbox.prototype.getMessageListByDateInterval = function(minDate, maxDate){
 /** like getMessageListByDateInterval, but faster property retrieval due to circumvention of mailbox.whose() */
 Mailbox.prototype.getMessageListByDateInterval2 = function(minDate, maxDate) {
 	const totalMsgList = this._raw.messages(), listLen = totalMsgList.length
+	if (listLen == 0) return []
+	
 	const minTS = minDate.getTime(), maxTS = maxDate.getTime()
 	let counter = 0
 	const binarySearch = (searchTS, oldestIdx, newestIdx, boundaryType) => {
-	  do {
+	  while (oldestIdx > newestIdx) {
 		var pivotIdx = ((oldestIdx - newestIdx) >> 1) + newestIdx
 		var pivotMsg = new Message(totalMsgList[pivotIdx]),
 			pivotTS = new Date(pivotMsg.getField2('date')).getTime()
+		
 		if (pivotTS == searchTS) return pivotIdx
 		if (pivotTS > searchTS) {  // found message is newer than searched timestamp
 			newestIdx = pivotIdx + 1
 		} else {  // found message is older than searched timestamp
 			oldestIdx = pivotIdx - 1
 		}
-	  } while (oldestIdx - newestIdx > 0)
+	  } //while (oldestIdx - newestIdx > 0)
 	  // here: newestIdx = oldestIdx
 	  pivotIdx = newestIdx
 	  pivotMsg = new Message(totalMsgList[pivotIdx]),
@@ -2659,19 +2662,21 @@ Account.getAccountList = function() {
 }
 
 
-/** script called from commandline */
+/** script called from command line */
 function CliMode() {
-	const args = $.NSProcessInfo.processInfo.arguments
-	if (args.count < 3 || !args.js[2].js.startsWith('--')) return
+	const args = $.NSProcessInfo.processInfo.arguments,
+		firstCmdIdx = args.js.findIndex(arg => arg.js.startsWith('--'))
+	if (firstCmdIdx == -1)
+	    return
 	
 	CliMode.isCliMode = true
 	
 	const findStartIdx = (cmd) => {
 		return args.js.findIndex((arg) => arg.js == cmd)
 	}
-	/*
+	
 	// print all args for debugging
-	const printArgs = () => {
+	/*const printArgs = () => {
 		var list = ''
 		for (let i=0; i<args.count; i++) {
 			list += ' '+ args.js[i].js
@@ -2681,20 +2686,20 @@ function CliMode() {
 	printArgs()*/
 	
 	var cmdIdx = findStartIdx('--similarity')
-	if (cmdIdx >= 2) {
+	if (cmdIdx >= 1) {
 		CliMode.similarity(args.js.slice(cmdIdx + 1))
 		$.exit(0)
 	} else if ((cmdIdx = CliMode.findArg(args.js, '--selector-stats', 5)).length > 0) {
 		CliMode.selectorStats(cmdIdx)
 		$.exit(0)
-	} else if ((cmdIdx = findStartIdx('--account-details')) >= 2) {
+	} else if ((cmdIdx = findStartIdx('--account-details')) >= 1) {
 		CliMode.accountDetails(args.js.slice(cmdIdx + 1))
 		$.exit(0)
-	} else if ((cmdIdx = findStartIdx('--match-details')) >= 2) {
+	} else if ((cmdIdx = findStartIdx('--match-details')) >= 1) {
 		shouldAlertMatchDetails = true
 		run()
 		$.exit(0)
-	} else if ((cmdIdx = findStartIdx('--help')) >= 2) {
+	} else if ((cmdIdx = findStartIdx('--help')) >= 1) {
 		CliMode.printHelp()
 		$.exit(0)
 	}
@@ -2861,7 +2866,7 @@ CliMode.selectorStats = function(args) {
 			  for (const message of messageList) {
 				CliMode.selectorStats.analyzeMessage(message, account, mailbox, senderAddressMap, includesSelector, authHandlers)
 			  }
-			  $.printf(messageList.length+' messages\n')
+			  $.printf(`${messageList.length} messages in ${mailbox.name}\n`)
 			  return
 			}
 			
